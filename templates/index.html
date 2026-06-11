@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Велопогода</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 16px; }
+  h1 { font-size: 1.2rem; color: #58a6ff; margin-bottom: 12px; }
+
+  .meta { font-size: 0.78rem; color: #8b949e; margin-bottom: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .meta span { white-space: nowrap; }
+  .error { color: #f85149; background: #1f1f1f; padding: 8px 12px; border-left: 3px solid #f85149; margin-bottom: 12px; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; align-items: flex-end; }
+  .controls form { display: flex; gap: 8px; align-items: center; }
+  .controls label { font-size: 0.8rem; color: #8b949e; }
+  input[type=number] {
+    background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 6px 10px; border-radius: 4px; width: 90px; font-family: monospace;
+  }
+  button {
+    background: #238636; color: #fff; border: none; padding: 7px 14px;
+    border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 0.85rem;
+  }
+  button.secondary { background: #21262d; border: 1px solid #30363d; }
+  button:hover { opacity: 0.85; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; padding: 6px 10px; background: #161b22; color: #8b949e;
+       border-bottom: 1px solid #30363d; white-space: nowrap; }
+  td { padding: 6px 10px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+
+  tr.passed td { color: #6e7681; }
+  tr.current td { background: #1f2937; color: #f0f6fc; font-weight: bold; }
+  tr.current td:first-child { border-left: 3px solid #58a6ff; }
+  tr.stop td { background: #1a2226; }
+  tr.stop td.stop-cell { color: #ffa657; }
+
+  .precip-0  { color: #57ab5a; }
+  .precip-lo { color: #d4a72c; }
+  .precip-md { color: #fa7970; }
+  .precip-hi { color: #f85149; font-weight: bold; }
+
+  .headwind-pos { color: #fa7970; }
+  .headwind-neg { color: #57ab5a; }
+
+  .progress-bar {
+    height: 6px; background: #21262d; border-radius: 3px; margin-bottom: 16px;
+  }
+  .progress-fill {
+    height: 6px; background: #58a6ff; border-radius: 3px;
+    transition: width 0.5s;
+  }
+
+  @media (max-width: 600px) {
+    td, th { padding: 4px 6px; font-size: 0.75rem; }
+    .hide-mobile { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>🚴 Велопогода</h1>
+
+{% if state.last_error %}
+<div class="error">⚠ {{ state.last_error }}</div>
+{% endif %}
+
+<div class="meta">
+  <span>Пересчитано: {{ state.last_calc or '—' }}</span>
+  <span>Текущий км: <strong>{{ state.current_km | int }}</strong></span>
+  <span>Всего: {{ state.total_km | int }} км</span>
+</div>
+
+{% if state.total_km > 0 %}
+<div class="progress-bar">
+  <div class="progress-fill" style="width: {{ [(state.current_km / state.total_km * 100), 100] | min }}%"></div>
+</div>
+{% endif %}
+
+<div class="controls">
+  <form action="/update_km" method="post">
+    <label>Текущий км:</label>
+    <input type="number" name="km" value="{{ state.current_km | int }}" min="0" step="1">
+    <button type="submit">Обновить позицию</button>
+  </form>
+
+  <form action="/recalc" method="post">
+    <button type="submit" class="secondary">↻ Пересчитать сейчас</button>
+  </form>
+</div>
+
+{% if state.grid %}
+<table>
+  <thead>
+    <tr>
+      <th>Км</th>
+      <th>Время прибытия</th>
+      <th>Прошло, ч</th>
+      <th>Осадки</th>
+      <th>Ветер</th>
+      <th class="hide-mobile">Встр/Поп</th>
+      <th class="hide-mobile">Скорость</th>
+      <th>Остановка</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for pt in state.grid %}
+    {% set is_passed = pt.km < state.current_km %}
+    {% set is_current = (pt.km | int - state.current_km | int) | abs < 10 and not is_passed %}
+    {% set has_stop = pt.stop_here_h > 0 %}
+
+    <tr class="
+      {% if is_passed %}passed{% elif is_current %}current{% endif %}
+      {% if has_stop %} stop{% endif %}
+    ">
+      <td>{{ pt.km | int }}</td>
+      <td>{{ pt.wall_time[11:16] }} UTC</td>
+      <td>{{ "%.1f"|format(pt.elapsed_h) }}</td>
+
+      {# Осадки #}
+      {% if pt.precip_mm_h < 0.1 %}
+        <td class="precip-0">○ сухо</td>
+      {% elif pt.precip_mm_h < 0.5 %}
+        <td class="precip-lo">◔ {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
+      {% elif pt.precip_mm_h < 2.0 %}
+        <td class="precip-md">◑ {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
+      {% else %}
+        <td class="precip-hi">● {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
+      {% endif %}
+
+      <td>{{ pt.wind_ms }} м/с</td>
+
+      {# Встречный/попутный #}
+      {% if pt.headwind_ms > 0.5 %}
+        <td class="headwind-pos hide-mobile">↑ +{{ "%.1f"|format(pt.headwind_ms) }}</td>
+      {% elif pt.headwind_ms < -0.5 %}
+        <td class="headwind-neg hide-mobile">↓ {{ "%.1f"|format(pt.headwind_ms) }}</td>
+      {% else %}
+        <td class="hide-mobile">≈ бок</td>
+      {% endif %}
+
+      <td class="hide-mobile">{{ pt.speed_kmh }} км/ч</td>
+
+      {# Остановка #}
+      {% if has_stop %}
+        <td class="stop-cell">{{ pt.stop_reason }} ({{ "%.1f"|format(pt.stop_here_h) }}ч)</td>
+      {% else %}
+        <td></td>
+      {% endif %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if state.ride %}
+  {% set last = state.ride[-1] %}
+  <p style="margin-top:14px; font-size:0.82rem; color:#8b949e;">
+    Финиш: {{ last.wall_time[11:16] }} UTC &nbsp;|&nbsp;
+    Итоговое время: {{ "%.1f"|format(last.elapsed_h) }} ч
+    {% if state.config.time_limit_h %}
+      &nbsp;|&nbsp; Лимит: {{ state.config.time_limit_h }} ч
+      {% if last.elapsed_h <= state.config.time_limit_h %}
+        &nbsp;<span style="color:#57ab5a">✓ вписываемся</span>
+      {% else %}
+        &nbsp;<span style="color:#f85149">✗ превышение {{ "%.1f"|format(last.elapsed_h - state.config.time_limit_h) }} ч</span>
+      {% endif %}
+    {% endif %}
+  </p>
+{% endif %}
+
+{% else %}
+<p style="color:#8b949e; margin-top: 20px;">
+  Данных пока нет. Проверьте config.json и наличие GPX-файла.
+</p>
+{% endif %}
+
+<script>
+  // Авто-обновление страницы каждые 2 минуты
+  setTimeout(() => location.reload(), 120_000);
+</script>
+
+</body>
+</html>
