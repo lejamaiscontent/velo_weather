@@ -118,33 +118,102 @@ def effective_headwind(wind_speed_ms: float, wind_dir_deg: float, bearing_deg: f
     return -wind_speed_ms * math.cos(angle_diff)
 
 
+_MAX_SPEED_MS = 14.0   # ~50 км/ч — потолок скорости (спуск с торможением)
+
+
 def solve_speed(power_w: float, grade: float, headwind_ms: float,
                 mass_kg=85.0, cda=0.36, crr=0.004, rho=1.225) -> float:
-    """Итеративное решение уравнения баланса мощности методом Ньютона."""
+    """
+    Решает уравнение баланса мощности методом Ньютона.
+    P = (F_aero + F_roll + F_grav) * v
+
+    На спусках: если сила тяжести превышает сопротивление качению,
+    возможна скорость выше 'без педалей'. Решение ищем от высокой стартовой
+    точки и ограничиваем _MAX_SPEED_MS.
+    """
     g = 9.81
     grade_rad = math.atan(grade)
     F_roll = crr * mass_kg * g * math.cos(grade_rad)
-    F_grav = mass_kg * g * math.sin(grade_rad)
+    F_grav = mass_kg * g * math.sin(grade_rad)   # < 0 на спуске
+    net_static = F_roll + F_grav
 
-    # Начальное приближение: плоский асфальт без ветра
-    v = max(1.0, (power_w / (F_roll + abs(F_grav) + 1)) ** (1 / 3))
+    if net_static <= 0:
+        # Гравитация превышает качение — скорость без педалей уже высокая.
+        # Скорость свободного качения: 0.5*rho*cda*(v+hw)^2 = -net_static
+        # Приближение без встречного ветра:
+        v_free = math.sqrt(max(0.0, -2 * net_static / (rho * cda)))
+        if v_free >= _MAX_SPEED_MS:
+            return _MAX_SPEED_MS
+        # Стартуем чуть выше v_free, чтобы Newton шёл в нужную сторону
+        v = min(_MAX_SPEED_MS, v_free + 1.0)
+    else:
+        v = max(1.0, (power_w / (net_static + 1.0)) ** (1.0 / 3.0))
 
-    for _ in range(120):
+    for _ in range(200):
         vw = v + headwind_ms
         F_aero = 0.5 * rho * cda * vw ** 2
         P_calc = (F_aero + F_roll + F_grav) * v
         dP = (F_aero + F_roll + F_grav) + v * rho * cda * vw
         delta = (P_calc - power_w) / dP if abs(dP) > 1e-9 else 0.0
-        v = max(0.3, v - delta)
+        v = max(0.3, min(_MAX_SPEED_MS, v - delta))
         if abs(delta) < 1e-5:
             break
 
-    return v
+    return min(v, _MAX_SPEED_MS)
 
 
 # ---------------------------------------------------------------------------
 # Погода
 # ---------------------------------------------------------------------------
+
+def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
+                           model: str = "icon_seamless") -> List[WeatherPoint]:
+    """Параллельный фетч погоды — все точки одновременно."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    total = segments[-1].cum_dist_m
+    targets = [i * total / (n_samples - 1) for i in range(n_samples)]
+    sample_segs = [min(segments, key=lambda s: abs(s.cum_dist_m - t)) for t in targets]
+
+    seen, unique = set(), []
+    for s in sample_segs:
+        key = (round(s.lat, 3), round(s.lon, 3))
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+
+    def _fetch_one(seg):
+        params = {
+            "latitude": seg.lat, "longitude": seg.lon,
+            "hourly": "wind_speed_10m,wind_direction_10m,precipitation",
+            "wind_speed_unit": "ms", "timezone": "UTC",
+            "forecast_days": 3, "models": model,
+        }
+        for attempt in range(4):
+            r = requests.get("https://api.open-meteo.com/v1/forecast",
+                             params=params, timeout=15)
+            if r.status_code == 429:
+                import time as _t
+                _t.sleep(2 ** attempt)   # 1, 2, 4, 8 сек
+                continue
+            r.raise_for_status()
+            h = r.json()["hourly"]
+            times = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
+                     for t in h["time"]]
+            return WeatherPoint(lat=seg.lat, lon=seg.lon, times=times,
+                                wind_speed=h["wind_speed_10m"],
+                                wind_dir=h["wind_direction_10m"],
+                                precip=h["precipitation"])
+        r.raise_for_status()   # последняя попытка — пробрасываем исключение
+
+    result = [None] * len(unique)
+    # max_workers=3 — не ронять Open-Meteo rate limit
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {ex.submit(_fetch_one, s): i for i, s in enumerate(unique)}
+        for fut in as_completed(futures):
+            result[futures[fut]] = fut.result()
+    return result
+
 
 def fetch_weather(segments: List[Segment], n_samples: int = 10,
                   model: str = "icon_seamless") -> List[WeatherPoint]:
@@ -237,26 +306,26 @@ def simulate(
     time_limit_h: float = 40.0,
     overnight_km: float = 300.0,
     overnight_h: float = 8.0,
-    rain_threshold: float = 0.5,    # мм/ч — при таком значении останавливаемся
-    max_rain_wait_h: float = 3.0,   # максимум ждём дождь
-    current_km: float = 0.0,        # начинаем с этого км
-    sample_every_km: float = 1.0,   # гранулярность выходных данных
+    rain_threshold: float = 0.5,
+    max_rain_wait_h: float = 3.0,
+    current_km: float = 0.0,
+    sample_every_km: float = 1.0,
+    route_start_time: Optional[datetime] = None,  # фиксированный старт для elapsed_h
 ) -> List[RidePoint]:
     """
     Симулирует поездку сегмент за сегментом.
 
-    Алгоритм остановок:
-    1. Обязательная ночёвка вблизи overnight_km.
-    2. При осадках > rain_threshold проверяем, пройдут ли они
-       в течение max_rain_wait_h; если да — ждём.
-    3. Не превышаем time_limit_h суммарного времени (без стоянок не получится —
-       предупреждаем, но не срезаем маршрут).
+    start_time       — стена в точке current_km (откуда начинаем считать погоду/скорость).
+    route_start_time — фиксированный старт маршрута (6:50); elapsed_h считается от него.
+                       Если None — совпадает с start_time.
     """
     if not weather_points:
         raise ValueError("Нет данных о погоде")
 
     current_time = start_time
-    elapsed_h = 0.0
+    # Смещение elapsed_h: сколько часов прошло от route_start до start_time
+    _route_start = route_start_time if route_start_time is not None else start_time
+    elapsed_h = (start_time - _route_start).total_seconds() / 3600.0
     last_sample_km = current_km - 1.0
 
     overnight_done = False
@@ -341,14 +410,71 @@ def total_route_km(segments: List[Segment]) -> float:
 
 
 def grid_10km(ride: List[RidePoint]) -> List[RidePoint]:
-    """Точки каждые 10 км для таблицы на сайте."""
+    """
+    Точки каждые 10 км + все точки с плановыми остановками.
+    Остановки всегда попадают в сетку независимо от км-шага.
+    """
     result = []
     next_km = 0.0
     for rp in ride:
-        if rp.km >= next_km:
+        if rp.stop_here_h > 0:
+            result.append(rp)
+            next_km = rp.km + 10.0   # следующий 10км-маркер от точки стоянки
+        elif rp.km >= next_km:
             result.append(rp)
             next_km = rp.km + 10.0
     return result
+
+
+def _sim_riding_time(segments: List[Segment], from_km: float, to_km: float,
+                     start_time: datetime, weather_points: List[WeatherPoint],
+                     power_w: float, mass_kg: float, cda: float, crr: float) -> float:
+    """Чистое время езды (без стоянок) на отрезке from_km..to_km."""
+    current_time = start_time
+    total_h = 0.0
+    for s in segments:
+        km = s.cum_dist_m / 1000.0
+        if km < from_km or km > to_km:
+            continue
+        wp = _nearest_weather(weather_points, s.lat, s.lon)
+        ws, wd, _ = _interp(wp, current_time)
+        hw = effective_headwind(ws, wd, s.bearing_deg)
+        v = solve_speed(power_w, s.grade, hw, mass_kg, cda, crr)
+        dt = s.dist_m / v / 3600.0
+        total_h += dt
+        current_time += timedelta(hours=dt)
+    return total_h
+
+
+def calibrate_power(segments: List[Segment],
+                    from_km: float, to_km: float,
+                    start_time: datetime,
+                    actual_riding_h: float,
+                    weather_points: List[WeatherPoint],
+                    mass_kg: float, cda: float, crr: float,
+                    default_power: float) -> float:
+    """
+    Бинарный поиск мощности, при которой симуляция даёт actual_riding_h
+    на отрезке from_km..to_km.
+
+    actual_riding_h — реальное время в движении (общее время минус стоянки).
+    """
+    if actual_riding_h <= 0 or to_km <= from_km:
+        return default_power
+
+    lo, hi = 30.0, 500.0
+    for _ in range(30):
+        mid = (lo + hi) / 2.0
+        t = _sim_riding_time(segments, from_km, to_km, start_time,
+                             weather_points, mid, mass_kg, cda, crr)
+        if t < actual_riding_h:
+            hi = mid   # симуляция быстрее реальности → мощность завышена
+        else:
+            lo = mid   # симуляция медленнее → мощность занижена
+
+    result = (lo + hi) / 2.0
+    # Ограничиваем разумным диапазоном от дефолта
+    return max(default_power * 0.35, min(default_power * 2.5, result))
 
 
 def ride_to_dict(ride: List[RidePoint]) -> list:

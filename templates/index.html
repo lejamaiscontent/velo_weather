@@ -2,185 +2,391 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Велопогода</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Целина 600</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 16px; }
-  h1 { font-size: 1.2rem; color: #58a6ff; margin-bottom: 12px; }
+:root {
+  --bg:#0d1117; --card:#161b22; --border:#30363d;
+  --muted:#8b949e; --text:#e6edf3;
+  --blue:#58a6ff; --green:#3fb950; --yellow:#d29922;
+  --orange:#db6d28; --red:#f85149;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;
+     background:var(--bg);color:var(--text);padding-bottom:80px}
 
-  .meta { font-size: 0.78rem; color: #8b949e; margin-bottom: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
-  .meta span { white-space: nowrap; }
-  .error { color: #f85149; background: #1f1f1f; padding: 8px 12px; border-left: 3px solid #f85149; margin-bottom: 12px; }
+/* шапка */
+.hdr{position:sticky;top:0;z-index:100;background:var(--bg);
+     border-bottom:1px solid var(--border);padding:10px 14px 8px}
+.hdr-row{display:flex;justify-content:space-between;align-items:center}
+.title{font-size:1rem;font-weight:700;color:var(--blue)}
+.calc-ts{font-size:.7rem;color:var(--muted)}
+.prog{margin-top:7px}
+.prog-bar{height:5px;background:var(--border);border-radius:3px}
+.prog-fill{height:5px;background:var(--blue);border-radius:3px;transition:width .4s}
+.prog-lbl{display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-top:3px}
 
-  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; align-items: flex-end; }
-  .controls form { display: flex; gap: 8px; align-items: center; }
-  .controls label { font-size: 0.8rem; color: #8b949e; }
-  input[type=number] {
-    background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
-    padding: 6px 10px; border-radius: 4px; width: 90px; font-family: monospace;
-  }
-  button {
-    background: #238636; color: #fff; border: none; padding: 7px 14px;
-    border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 0.85rem;
-  }
-  button.secondary { background: #21262d; border: 1px solid #30363d; }
-  button:hover { opacity: 0.85; }
+/* power badge */
+.power-badge{display:inline-flex;align-items:center;gap:6px;
+  font-size:.78rem;padding:3px 9px;border-radius:12px;
+  background:#1a2230;border:1px solid var(--blue);color:var(--blue);margin-top:6px}
+.power-badge.calibrated{border-color:var(--green);color:var(--green);background:#0d1f12}
 
-  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  th { text-align: left; padding: 6px 10px; background: #161b22; color: #8b949e;
-       border-bottom: 1px solid #30363d; white-space: nowrap; }
-  td { padding: 6px 10px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+/* переключатель модели */
+.model-toggle{display:flex;gap:6px;margin:10px 14px 0}
+.mbtn{flex:1;padding:9px 4px;border-radius:8px;border:1px solid var(--border);
+      background:var(--card);color:var(--muted);font-size:.82rem;
+      cursor:pointer;text-align:center;transition:all .15s}
+.mbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
 
-  tr.passed td { color: #6e7681; }
-  tr.current td { background: #1f2937; color: #f0f6fc; font-weight: bold; }
-  tr.current td:first-child { border-left: 3px solid #58a6ff; }
-  tr.stop td { background: #1a2226; }
-  tr.stop td.stop-cell { color: #ffa657; }
+/* ошибка */
+.err{margin:10px 14px;padding:10px 12px;background:#1f0f0f;
+     border-left:3px solid var(--red);font-size:.82rem;color:var(--red);border-radius:4px}
 
-  .precip-0  { color: #57ab5a; }
-  .precip-lo { color: #d4a72c; }
-  .precip-md { color: #fa7970; }
-  .precip-hi { color: #f85149; font-weight: bold; }
+/* секции */
+.sec{margin:14px 14px 0}
+.sec-lbl{font-size:.68rem;color:var(--muted);text-transform:uppercase;
+         letter-spacing:.06em;margin-bottom:7px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px}
 
-  .headwind-pos { color: #fa7970; }
-  .headwind-neg { color: #57ab5a; }
+/* формы */
+.frow{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px}
+.frow:last-child{margin-bottom:0}
+.fld{display:flex;flex-direction:column;gap:4px;flex:1;min-width:64px}
+.fld label{font-size:.68rem;color:var(--muted)}
+input[type=number],input[type=time],input[type=text]{
+  background:var(--bg);border:1px solid var(--border);color:var(--text);
+  padding:9px 10px;border-radius:7px;font-size:1rem;width:100%;font-family:inherit;
+  -webkit-appearance:none}
+input:focus{outline:none;border-color:var(--blue)}
+.btn{padding:10px 16px;border-radius:8px;border:none;
+     font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit}
+.btn-blue{background:var(--blue);color:#fff}
+.btn-green{background:var(--green);color:#fff}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
+.btn-sm{padding:7px 12px;font-size:.78rem}
+.btn:active{opacity:.75}
 
-  .progress-bar {
-    height: 6px; background: #21262d; border-radius: 3px; margin-bottom: 16px;
-  }
-  .progress-fill {
-    height: 6px; background: #58a6ff; border-radius: 3px;
-    transition: width 0.5s;
-  }
+/* список стоянок */
+.stop-list{margin-top:10px}
+.stop-row{display:flex;justify-content:space-between;align-items:center;
+  font-size:.78rem;padding:6px 0;border-bottom:1px solid var(--border);color:var(--muted)}
+.stop-row:last-child{border-bottom:none}
+.stop-km{color:var(--orange);font-weight:600;margin-right:6px}
 
-  @media (max-width: 600px) {
-    td, th { padding: 4px 6px; font-size: 0.75rem; }
-    .hide-mobile { display: none; }
-  }
+/* итог */
+.summary{display:flex;gap:16px;flex-wrap:wrap;margin:14px 14px 0;padding:12px;
+  background:var(--card);border-radius:10px;border:1px solid var(--border);font-size:.82rem}
+.si{display:flex;flex-direction:column;gap:2px}
+.si-lbl{font-size:.66rem;color:var(--muted);text-transform:uppercase}
+.si-val{font-weight:700;font-size:1rem}
+.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}
+
+/* сетка */
+.grid{margin:14px 14px 0;display:flex;flex-direction:column;gap:6px}
+.kc{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:11px 13px;display:grid;
+    grid-template-columns:52px 1fr auto;grid-template-rows:auto auto;
+    gap:2px 10px;align-items:center}
+.kc.passed{opacity:.4}
+.kc.cur{border-color:var(--blue);background:#0f1d2e}
+.kc.has-stop{border-color:var(--orange)}
+.km-n{font-size:1.25rem;font-weight:800;color:var(--blue);grid-row:1/3;align-self:center}
+.kc.passed .km-n{color:var(--muted)}
+.km-t{font-size:.9rem;font-weight:600}
+.km-e{font-size:.7rem;color:var(--muted)}
+.km-meta{grid-column:2/4;display:flex;gap:8px;flex-wrap:wrap;margin-top:3px}
+.tag{display:inline-flex;align-items:center;gap:3px;font-size:.75rem;
+     padding:2px 7px;border-radius:12px;background:#21262d}
+.p0{color:var(--green)}.p1{color:var(--yellow)}.p2{color:var(--orange)}
+.p3{color:var(--red);font-weight:700}
+.hw{color:var(--red)}.tw{color:var(--green)}.sw{color:var(--muted)}
+.stag{color:var(--orange);font-weight:600}
+
+/* FAB */
+.fab{position:fixed;bottom:20px;right:16px;background:var(--blue);color:#fff;
+     border:none;border-radius:50%;width:52px;height:52px;font-size:1.3rem;
+     cursor:pointer;box-shadow:0 4px 16px #0004;
+     display:flex;align-items:center;justify-content:center}
+.fab:active{opacity:.75;transform:scale(.95)}
+
+/* баннеры остановок в сетке */
+.stop-banner{border-radius:10px;padding:12px 14px;margin:0;
+             display:flex;align-items:flex-start;gap:12px}
+.stop-banner.overnight{background:#1c1400;border:2px solid var(--yellow);color:var(--yellow)}
+.stop-banner.rain-wait{background:#1a1500;border:1px solid var(--orange);color:var(--orange)}
+.stop-banner.actual   {background:#0d1f12;border:1px solid var(--green);color:var(--green)}
+.stop-banner .sb-icon{font-size:1.5rem;flex-shrink:0;margin-top:1px}
+.stop-banner .sb-body{display:flex;flex-direction:column;gap:4px;flex:1}
+.stop-banner .sb-title{font-weight:700;font-size:.95rem}
+.stop-banner .sb-detail{font-size:.78rem;opacity:.8}
+.stop-banner .sb-btn{margin-top:6px}
+.overnight-off{opacity:.45;border-style:dashed}
+
+.empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:.9rem}
 </style>
 </head>
 <body>
 
-<h1>🚴 Велопогода</h1>
+<!-- ШАПКА -->
+<div class="hdr">
+  <div class="hdr-row">
+    <span class="title">🚴 Целина 600</span>
+    <span class="calc-ts" id="last-calc">
+      {% if state.last_calc %}{{ state.last_calc | msk_full }} МСК{% else %}—{% endif %}
+    </span>
+  </div>
+
+  {% if state.total_km > 0 %}
+  <div class="prog">
+    <div class="prog-bar">
+      <div class="prog-fill"
+        style="width:{{ [[state.current_km/state.total_km*100,0]|max,100]|min }}%"></div>
+    </div>
+    <div class="prog-lbl">
+      <span>{{ state.current_km|int }} км</span>
+      <span>{{ state.total_km|int }} км</span>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Мощность -->
+  {% set cfg_pwr = state.config.power_w or 150 %}
+  {% if state.effective_power %}
+  <div class="power-badge calibrated">
+    ⚡ {{ state.effective_power|int }} Вт
+    <span style="color:var(--muted);font-size:.68rem">(базо {{ cfg_pwr|int }} Вт)</span>
+  </div>
+  {% else %}
+  <div class="power-badge">⚡ {{ cfg_pwr|int }} Вт (базо)</div>
+  {% endif %}
+</div>
 
 {% if state.last_error %}
-<div class="error">⚠ {{ state.last_error }}</div>
+<div class="err">⚠ {{ state.last_error }}</div>
 {% endif %}
 
-<div class="meta">
-  <span>Пересчитано: {{ state.last_calc or '—' }}</span>
-  <span>Текущий км: <strong>{{ state.current_km | int }}</strong></span>
-  <span>Всего: {{ state.total_km | int }} км</span>
-</div>
-
-{% if state.total_km > 0 %}
-<div class="progress-bar">
-  <div class="progress-fill" style="width: {{ [(state.current_km / state.total_km * 100), 100] | min }}%"></div>
-</div>
-{% endif %}
-
-<div class="controls">
-  <form action="/update_km" method="post">
-    <label>Текущий км:</label>
-    <input type="number" name="km" value="{{ state.current_km | int }}" min="0" step="1">
-    <button type="submit">Обновить позицию</button>
-  </form>
-
-  <form action="/recalc" method="post">
-    <button type="submit" class="secondary">↻ Пересчитать сейчас</button>
-  </form>
-</div>
-
-{% if state.grid %}
-<table>
-  <thead>
-    <tr>
-      <th>Км</th>
-      <th>Время прибытия</th>
-      <th>Прошло, ч</th>
-      <th>Осадки</th>
-      <th>Ветер</th>
-      <th class="hide-mobile">Встр/Поп</th>
-      <th class="hide-mobile">Скорость</th>
-      <th>Остановка</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for pt in state.grid %}
-    {% set is_passed = pt.km < state.current_km %}
-    {% set is_current = (pt.km | int - state.current_km | int) | abs < 10 and not is_passed %}
-    {% set has_stop = pt.stop_here_h > 0 %}
-
-    <tr class="
-      {% if is_passed %}passed{% elif is_current %}current{% endif %}
-      {% if has_stop %} stop{% endif %}
-    ">
-      <td>{{ pt.km | int }}</td>
-      <td>{{ pt.wall_time[11:16] }} UTC</td>
-      <td>{{ "%.1f"|format(pt.elapsed_h) }}</td>
-
-      {# Осадки #}
-      {% if pt.precip_mm_h < 0.1 %}
-        <td class="precip-0">○ сухо</td>
-      {% elif pt.precip_mm_h < 0.5 %}
-        <td class="precip-lo">◔ {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
-      {% elif pt.precip_mm_h < 2.0 %}
-        <td class="precip-md">◑ {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
-      {% else %}
-        <td class="precip-hi">● {{ "%.1f"|format(pt.precip_mm_h) }} мм/ч</td>
-      {% endif %}
-
-      <td>{{ pt.wind_ms }} м/с</td>
-
-      {# Встречный/попутный #}
-      {% if pt.headwind_ms > 0.5 %}
-        <td class="headwind-pos hide-mobile">↑ +{{ "%.1f"|format(pt.headwind_ms) }}</td>
-      {% elif pt.headwind_ms < -0.5 %}
-        <td class="headwind-neg hide-mobile">↓ {{ "%.1f"|format(pt.headwind_ms) }}</td>
-      {% else %}
-        <td class="hide-mobile">≈ бок</td>
-      {% endif %}
-
-      <td class="hide-mobile">{{ pt.speed_kmh }} км/ч</td>
-
-      {# Остановка #}
-      {% if has_stop %}
-        <td class="stop-cell">{{ pt.stop_reason }} ({{ "%.1f"|format(pt.stop_here_h) }}ч)</td>
-      {% else %}
-        <td></td>
-      {% endif %}
-    </tr>
+<!-- МОДЕЛЬ -->
+<div class="model-toggle">
+  {% for m in model_list %}
+  <button class="mbtn {% if loop.first %}active{% endif %}"
+          onclick="switchModel('{{ m }}',this)">
+    {{ 'DWD / ICON' if m=='icon_seamless' else 'ECMWF IFS' }}
+  </button>
   {% endfor %}
-  </tbody>
-</table>
+</div>
 
-{% if state.ride %}
-  {% set last = state.ride[-1] %}
-  <p style="margin-top:14px; font-size:0.82rem; color:#8b949e;">
-    Финиш: {{ last.wall_time[11:16] }} UTC &nbsp;|&nbsp;
-    Итоговое время: {{ "%.1f"|format(last.elapsed_h) }} ч
-    {% if state.config.time_limit_h %}
-      &nbsp;|&nbsp; Лимит: {{ state.config.time_limit_h }} ч
-      {% if last.elapsed_h <= state.config.time_limit_h %}
-        &nbsp;<span style="color:#57ab5a">✓ вписываемся</span>
-      {% else %}
-        &nbsp;<span style="color:#f85149">✗ превышение {{ "%.1f"|format(last.elapsed_h - state.config.time_limit_h) }} ч</span>
-      {% endif %}
+<!-- ИТОГ -->
+{% if state.rides_last %}
+<div class="summary">
+  {% for m in model_list %}
+  {% set last = state.rides_last[m] %}
+  {% if last %}
+  {% set lim = state.config.time_limit_h or 40 %}
+  <div class="si" data-model="{{ m }}">
+    <span class="si-lbl">Финиш {{ 'ICON' if m=='icon_seamless' else 'ECMWF' }}</span>
+    <span class="si-val {% if last.elapsed_h <= lim %}ok{% else %}bad{% endif %}">
+      {{ last.wall_time | msk }} МСК &nbsp; {{ '%.1f'|format(last.elapsed_h) }} ч
+    </span>
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% if state.config.time_limit_h %}
+  <div class="si">
+    <span class="si-lbl">Лимит</span>
+    <span class="si-val">{{ state.config.time_limit_h }} ч</span>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- ПОЗИЦИЯ -->
+<div class="sec">
+  <div class="sec-lbl">Моя позиция</div>
+  <div class="card">
+    <form action="/update_position" method="post">
+      <div class="frow">
+        <div class="fld" style="max-width:90px">
+          <label>Текущий км</label>
+          <input type="number" name="km" value="{{ state.current_km|int }}" min="0" step="1">
+        </div>
+        <div class="fld">
+          <label>Время МСК (необяз.)</label>
+          <input type="time" name="pos_time">
+        </div>
+        <button type="submit" class="btn btn-blue" style="align-self:flex-end">→ Обновить</button>
+      </div>
+    </form>
+    {% if state.effective_power %}
+    <form action="/reset_power" method="post" style="margin-top:6px">
+      <button type="submit" class="btn btn-ghost btn-sm">↺ Сбросить калибровку мощности</button>
+    </form>
     {% endif %}
-  </p>
-{% endif %}
+  </div>
+</div>
 
-{% else %}
-<p style="color:#8b949e; margin-top: 20px;">
-  Данных пока нет. Проверьте config.json и наличие GPX-файла.
-</p>
-{% endif %}
+<!-- СТОЯНКИ -->
+<div class="sec">
+  <div class="sec-lbl">Фактические стоянки</div>
+  <div class="card">
+    <form action="/add_stop" method="post">
+      <div class="frow">
+        <div class="fld" style="max-width:80px">
+          <label>Км</label>
+          <input type="number" name="stop_km" placeholder="250" min="0" step="1">
+        </div>
+        <div class="fld" style="max-width:80px">
+          <label>Время МСК</label>
+          <input type="time" name="stop_time">
+        </div>
+        <div class="fld" style="max-width:80px">
+          <label>Длительность, ч</label>
+          <input type="number" name="stop_duration" placeholder="2.5" min="0" step="0.25">
+        </div>
+        <div class="fld">
+          <label>Заметка</label>
+          <input type="text" name="stop_note" placeholder="кафе, дождь…">
+        </div>
+        <button type="submit" class="btn btn-green" style="align-self:flex-end">+</button>
+      </div>
+    </form>
+
+    {% if state.actual_stops %}
+    <div class="stop-list">
+      {% for s in state.actual_stops %}
+      <div class="stop-row">
+        <span>
+          <span class="stop-km">{{ s.km|int }} км</span>
+          {% if s.time_msk %}{{ s.time_msk }} МСК &nbsp;·{% endif %}
+          {{ s.duration_h }} ч
+          {% if s.note %}&nbsp;· {{ s.note }}{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+      <form action="/clear_stops" method="post" style="margin-top:8px">
+        <button type="submit" class="btn btn-ghost btn-sm" style="width:100%">Очистить стоянки</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- СЕТКА МАРШРУТА -->
+<div class="sec"><div class="sec-lbl">Маршрут · каждые 10 км</div></div>
+
+{% for m in model_list %}
+<div class="grid" id="grid-{{ m }}" style="{{ 'display:none' if not loop.first }}">
+  {% set grid = state.models[m] %}
+  {% if grid %}
+    {% for pt in grid %}
+      {% set passed  = pt.km < state.current_km %}
+      {% set cur     = (pt.km - state.current_km)|abs < 10 and not passed %}
+      {% set has_stop= pt.stop_here_h > 0 %}
+
+      {% if pt.precip_mm_h < 0.1 %}{% set pc,pi='p0','○'%}
+      {% elif pt.precip_mm_h < 0.5 %}{% set pc,pi='p1','◔'%}
+      {% elif pt.precip_mm_h < 2 %}{% set pc,pi='p2','◑'%}
+      {% else %}{% set pc,pi='p3','●'%}{% endif %}
+
+      {% set hw=pt.headwind_ms %}
+      {% if hw>1 %}{% set wc,wi='hw','↑'%}
+      {% elif hw<-1 %}{% set wc,wi='tw','↓'%}
+      {% else %}{% set wc,wi='sw','→'%}{% endif %}
+
+      <div class="kc {% if passed %}passed{% elif cur %}cur{% endif %}{% if has_stop %} has-stop{% endif %}">
+        <span class="km-n">{{ pt.km|int }}</span>
+        <span class="km-t">{{ pt.wall_time | msk }} <span style="font-size:.68rem;color:var(--muted)">МСК</span></span>
+        <span class="km-e">+{{ '%.1f'|format(pt.elapsed_h) }} ч</span>
+        <div class="km-meta">
+          <span class="tag {{ pc }}">{{ pi }} {% if pt.precip_mm_h>=0.1 %}{{ '%.1f'|format(pt.precip_mm_h) }} мм/ч{% else %}сухо{% endif %}</span>
+          <span class="tag {{ wc }}">{{ wi }} {{ pt.wind_ms }} м/с</span>
+          <span class="tag sw">{{ pt.speed_kmh }} км/ч</span>
+        </div>
+      </div>
+
+      {# --- Плановая ночёвка --- #}
+      {% if has_stop and 'ночёвка' in pt.stop_reason %}
+        <div class="stop-banner overnight {% if state.overnight_disabled %}overnight-off{% endif %}">
+          <span class="sb-icon">🌙</span>
+          <div class="sb-body">
+            <span class="sb-title">
+              {% if state.overnight_disabled %}Ночёвка отключена{% else %}Плановая ночёвка — {{ '%.0f'|format(pt.stop_here_h) }} ч{% endif %}
+            </span>
+            <span class="sb-detail">
+              км {{ pt.km|int }} · прибытие {{ pt.wall_time | msk }} МСК
+              {% if not state.overnight_disabled %}
+                · подъём ~{{ (pt.wall_time | msk) }}+{{ '%.0f'|format(pt.stop_here_h) }}ч
+              {% endif %}
+            </span>
+            <div class="sb-btn">
+              <form action="/toggle_overnight" method="post" style="display:inline">
+                <button type="submit" class="btn btn-ghost btn-sm">
+                  {% if state.overnight_disabled %}🌙 Включить ночёвку{% else %}✕ Убрать ночёвку{% endif %}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {# --- Стоянка от дождя --- #}
+      {% elif has_stop %}
+        <div class="stop-banner rain-wait">
+          <span class="sb-icon">🌧</span>
+          <div class="sb-body">
+            <span class="sb-title">Стоянка от дождя — {{ '%.1f'|format(pt.stop_here_h) }} ч</span>
+            <span class="sb-detail">{{ pt.stop_reason }}</span>
+          </div>
+        </div>
+      {% endif %}
+
+      {# --- Фактические стоянки вблизи этого км --- #}
+      {% for s in state.actual_stops %}
+        {% if (s.km - pt.km)|abs < 6 %}
+          <div class="stop-banner actual">
+            <span class="sb-icon">📍</span>
+            <div class="sb-body">
+              <span class="sb-title">Фактическая стоянка — {{ s.duration_h }} ч
+                {% if s.note %}&nbsp;· {{ s.note }}{% endif %}
+              </span>
+              <span class="sb-detail">км {{ s.km|int }}
+                {% if s.time_msk %}&nbsp;· {{ s.time_msk }} МСК{% endif %}
+              </span>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+
+    {% endfor %}
+  {% else %}
+    <div class="empty">Идёт расчёт…</div>
+  {% endif %}
+</div>
+{% endfor %}
+
+<!-- FAB пересчёта -->
+<form action="/recalc" method="post">
+  <button type="submit" class="fab" title="Пересчитать">↻</button>
+</form>
+
+<!-- Кнопка сброса стейта -->
+<div style="margin:20px 14px 0;padding-bottom:20px">
+  <form action="/clear_state" method="post"
+        onsubmit="return confirm('Сбросить позицию, стоянки и калибровку мощности?')">
+    <button type="submit" class="btn btn-ghost btn-sm" style="width:100%;color:var(--red);border-color:var(--red)">
+      ✕ Сбросить state (позиция, стоянки, мощность)
+    </button>
+  </form>
+</div>
 
 <script>
-  // Авто-обновление страницы каждые 2 минуты
-  setTimeout(() => location.reload(), 120_000);
+const MODELS = {{ model_list|tojson }};
+function switchModel(name, btn) {
+  document.querySelectorAll('.mbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  MODELS.forEach(m=>{
+    document.getElementById('grid-'+m).style.display = m===name?'':'none';
+  });
+}
+setTimeout(()=>location.reload(), 120_000);
 </script>
-
 </body>
 </html>

@@ -1,16 +1,16 @@
 {
   "gpx_file": "route.gpx",
-  "start_time": "2025-07-01T06:00:00+00:00",
-  "power_w": 150,
-  "mass_kg": 85,
-  "cda": 0.36,
-  "crr": 0.004,
+  "start_time": "2026-06-12T03:50:00+00:00",
+  "power_w": 87,
+  "mass_kg": 90,
+  "cda": 0.40,
+  "crr": 0.005,
   "time_limit_h": 40,
   "overnight_km": 300,
-  "overnight_h": 8,
+  "overnight_h": 7,
   "rain_threshold": 0.5,
   "max_rain_wait_h": 3.0,
-  "weather_samples": 10,
+  "weather_samples": 40,
   "weather_model": "icon_seamless",
   "recalc_interval_min": 30
 }
