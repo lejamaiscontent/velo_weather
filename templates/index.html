@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Целина 600</title>
+<title>{{ gpx_name }}</title>
 <style>
 :root {
   --bg:#0d1117; --card:#161b22; --border:#30363d;
@@ -18,9 +18,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;
 /* шапка */
 .hdr{position:sticky;top:0;z-index:100;background:var(--bg);
      border-bottom:1px solid var(--border);padding:10px 14px 8px}
-.hdr-row{display:flex;justify-content:space-between;align-items:center}
+.hdr-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
 .title{font-size:1rem;font-weight:700;color:var(--blue)}
+.hdr-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
 .calc-ts{font-size:.7rem;color:var(--muted)}
+.api-counter{font-size:.65rem;color:var(--muted)}
+.api-counter span{color:var(--text)}
 .prog{margin-top:7px}
 .prog-bar{height:5px;background:var(--border);border-radius:3px}
 .prog-fill{height:5px;background:var(--blue);border-radius:3px;transition:width .4s}
@@ -31,13 +34,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;
   font-size:.78rem;padding:3px 9px;border-radius:12px;
   background:#1a2230;border:1px solid var(--blue);color:var(--blue);margin-top:6px}
 .power-badge.calibrated{border-color:var(--green);color:var(--green);background:#0d1f12}
+.power-badge.manual{border-color:var(--yellow);color:var(--yellow);background:#1c1700}
 
 /* переключатель модели */
-.model-toggle{display:flex;gap:6px;margin:10px 14px 0}
-.mbtn{flex:1;padding:9px 4px;border-radius:8px;border:1px solid var(--border);
-      background:var(--card);color:var(--muted);font-size:.82rem;
+.model-toggle{display:flex;gap:6px;margin:10px 14px 0;align-items:center;flex-wrap:wrap}
+.mbtn{flex:1;min-width:80px;padding:9px 4px;border-radius:8px;border:1px solid var(--border);
+      background:var(--card);color:var(--muted);font-size:.78rem;
       cursor:pointer;text-align:center;transition:all .15s}
 .mbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
+.rbtn{flex:0 0 auto;padding:6px 10px;border-radius:8px;border:1px solid var(--border);
+      background:var(--card);color:var(--muted);font-size:.75rem;
+      cursor:pointer;white-space:nowrap;transition:all .15s}
+.rbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
+.model-upd{font-size:.6rem;display:block;opacity:.7;margin-top:2px}
 
 /* ошибка */
 .err{margin:10px 14px;padding:10px 12px;background:#1f0f0f;
@@ -54,15 +63,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;
 .frow:last-child{margin-bottom:0}
 .fld{display:flex;flex-direction:column;gap:4px;flex:1;min-width:64px}
 .fld label{font-size:.68rem;color:var(--muted)}
-input[type=number],input[type=time],input[type=text]{
+input[type=number],input[type=time],input[type=text],input[type=file]{
   background:var(--bg);border:1px solid var(--border);color:var(--text);
   padding:9px 10px;border-radius:7px;font-size:1rem;width:100%;font-family:inherit;
   -webkit-appearance:none}
+input[type=file]{padding:7px 10px;font-size:.85rem}
 input:focus{outline:none;border-color:var(--blue)}
 .btn{padding:10px 16px;border-radius:8px;border:none;
      font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit}
 .btn-blue{background:var(--blue);color:#fff}
 .btn-green{background:var(--green);color:#fff}
+.btn-yellow{background:var(--yellow);color:#000}
 .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
 .btn-sm{padding:7px 12px;font-size:.78rem}
 .btn:active{opacity:.75}
@@ -101,7 +112,7 @@ input:focus{outline:none;border-color:var(--blue)}
 .p0{color:var(--green)}.p1{color:var(--yellow)}.p2{color:var(--orange)}
 .p3{color:var(--red);font-weight:700}
 .hw{color:var(--red)}.tw{color:var(--green)}.sw{color:var(--muted)}
-.stag{color:var(--orange);font-weight:600}
+.tc-cold{color:#6eb3f7}.tc-warm{color:var(--muted)}.tc-hot{color:var(--orange)}
 
 /* FAB */
 .fab{position:fixed;bottom:20px;right:16px;background:var(--blue);color:#fff;
@@ -110,12 +121,13 @@ input:focus{outline:none;border-color:var(--blue)}
      display:flex;align-items:center;justify-content:center}
 .fab:active{opacity:.75;transform:scale(.95)}
 
-/* баннеры остановок в сетке */
+/* баннеры остановок */
 .stop-banner{border-radius:10px;padding:12px 14px;margin:0;
              display:flex;align-items:flex-start;gap:12px}
 .stop-banner.overnight{background:#1c1400;border:2px solid var(--yellow);color:var(--yellow)}
 .stop-banner.rain-wait{background:#1a1500;border:1px solid var(--orange);color:var(--orange)}
 .stop-banner.actual   {background:#0d1f12;border:1px solid var(--green);color:var(--green)}
+.stop-banner.planned  {background:#111a2a;border:1px solid var(--muted);color:var(--muted)}
 .stop-banner .sb-icon{font-size:1.5rem;flex-shrink:0;margin-top:1px}
 .stop-banner .sb-body{display:flex;flex-direction:column;gap:4px;flex:1}
 .stop-banner .sb-title{font-weight:700;font-size:.95rem}
@@ -124,6 +136,7 @@ input:focus{outline:none;border-color:var(--blue)}
 .overnight-off{opacity:.45;border-style:dashed}
 
 .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:.9rem}
+.divider{margin:20px 14px 0;border:none;border-top:1px solid var(--border)}
 </style>
 </head>
 <body>
@@ -131,10 +144,12 @@ input:focus{outline:none;border-color:var(--blue)}
 <!-- ШАПКА -->
 <div class="hdr">
   <div class="hdr-row">
-    <span class="title">🚴 Целина 600</span>
-    <span class="calc-ts" id="last-calc">
-      {% if state.last_calc %}{{ state.last_calc | msk_full }} МСК{% else %}—{% endif %}
-    </span>
+    <span class="title">🚴 {{ gpx_name }}</span>
+    <div class="hdr-right">
+      <span id="ts-sim" class="calc-ts">симуляция {{ last_calc_local }}</span>
+      <span id="ts-weather" class="calc-ts">погода {{ last_weather_local }}</span>
+      <span class="api-counter">API сегодня: <span>{{ state.api_calls_today }}</span> / 10 000</span>
+    </div>
   </div>
 
   {% if state.total_km > 0 %}
@@ -152,10 +167,15 @@ input:focus{outline:none;border-color:var(--blue)}
 
   <!-- Мощность -->
   {% set cfg_pwr = state.config.power_w or 150 %}
-  {% if state.effective_power %}
+  {% if state.effective_power and state.manual_power %}
+  <div class="power-badge manual">
+    ⚡ {{ state.effective_power|int }} Вт
+    <span style="color:var(--muted);font-size:.68rem">(задано вручную)</span>
+  </div>
+  {% elif state.effective_power %}
   <div class="power-badge calibrated">
     ⚡ {{ state.effective_power|int }} Вт
-    <span style="color:var(--muted);font-size:.68rem">(базо {{ cfg_pwr|int }} Вт)</span>
+    <span style="color:var(--muted);font-size:.68rem">(авто, базо {{ cfg_pwr|int }} Вт)</span>
   </div>
   {% else %}
   <div class="power-badge">⚡ {{ cfg_pwr|int }} Вт (базо)</div>
@@ -166,14 +186,23 @@ input:focus{outline:none;border-color:var(--blue)}
 <div class="err">⚠ {{ state.last_error }}</div>
 {% endif %}
 
-<!-- МОДЕЛЬ -->
-<div class="model-toggle">
-  {% for m in model_list %}
-  <button class="mbtn {% if loop.first %}active{% endif %}"
-          onclick="switchModel('{{ m }}',this)">
-    {{ 'DWD / ICON' if m=='icon_seamless' else 'ECMWF IFS' }}
-  </button>
-  {% endfor %}
+<!-- МОДЕЛИ -->
+<div style="margin:10px 14px 0;display:flex;flex-direction:column;gap:6px">
+  <div style="display:flex;gap:6px">
+    {% for m in model_list %}
+    <button class="mbtn {% if loop.first %}active{% endif %}"
+            onclick="switchModel('{{ m }}',this)">
+      {% if m=='icon_seamless' %}DWD / ICON
+      {% else %}ECMWF IFS
+      {% endif %}
+      <span class="model-upd">данные ~{{ model_update_times[m] }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  <div style="display:flex;gap:6px">
+    <button class="mbtn active" id="rain-on"  onclick="switchRain(true)">с дождём</button>
+    <button class="mbtn"        id="rain-off" onclick="switchRain(false)">без дождя</button>
+  </div>
 </div>
 
 <!-- ИТОГ -->
@@ -181,24 +210,53 @@ input:focus{outline:none;border-color:var(--blue)}
 <div class="summary">
   {% for m in model_list %}
   {% set last = state.rides_last[m] %}
+  {% set last_nr = state.rides_last_no_rain[m] %}
   {% if last %}
-  {% set lim = state.config.time_limit_h or 40 %}
   <div class="si" data-model="{{ m }}">
-    <span class="si-lbl">Финиш {{ 'ICON' if m=='icon_seamless' else 'ECMWF' }}</span>
-    <span class="si-val {% if last.elapsed_h <= lim %}ok{% else %}bad{% endif %}">
-      {{ last.wall_time | msk }} МСК &nbsp; {{ '%.1f'|format(last.elapsed_h) }} ч
-    </span>
+    <span class="si-lbl">Финиш {% if m=='icon_seamless' %}ICON{% elif m=='ecmwf_ifs025' %}ECMWF{% else %}Best{% endif %}</span>
+    <div style="display:flex;gap:1rem;margin-top:2px">
+      <div>
+        <div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:2px">с дождём</div>
+        <span class="si-val">{{ last.wall_time | msk_full }}</span>
+      </div>
+      {% if last_nr %}
+      <div>
+        <div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:2px">без дождя</div>
+        <span class="si-val">{{ last_nr.wall_time | msk_full }}</span>
+      </div>
+      {% endif %}
+    </div>
   </div>
   {% endif %}
   {% endfor %}
-  {% if state.config.time_limit_h %}
   <div class="si">
-    <span class="si-lbl">Лимит</span>
-    <span class="si-val">{{ state.config.time_limit_h }} ч</span>
+    <span class="si-lbl">Старт</span>
+    <span class="si-val" style="font-size:.85rem">{{ start_msk }} МСК</span>
   </div>
-  {% endif %}
 </div>
 {% endif %}
+
+<!-- СТАРТ -->
+<div class="sec">
+  <div class="sec-lbl">Время старта</div>
+  <div class="card">
+    <form action="/set_start_time" method="post">
+      <div class="frow">
+        <div class="fld" style="max-width:140px">
+          <label>Дата</label>
+          <input type="date" name="start_date" value="{{ start_date_val }}"
+                 style="background:var(--bg);border:1px solid var(--border);color:var(--text);
+                        padding:9px 10px;border-radius:7px;font-size:1rem;width:100%">
+        </div>
+        <div class="fld" style="max-width:100px">
+          <label>Время МСК</label>
+          <input type="time" name="start_time_msk" value="{{ start_time_val }}">
+        </div>
+        <button type="submit" class="btn btn-blue" style="align-self:flex-end">→ Задать</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- ПОЗИЦИЯ -->
 <div class="sec">
@@ -225,6 +283,70 @@ input:focus{outline:none;border-color:var(--blue)}
   </div>
 </div>
 
+<!-- МОЩНОСТЬ ВРУЧНУЮ -->
+<div class="sec">
+  <div class="sec-lbl">Мощность вручную</div>
+  <div class="card">
+    <form action="/set_power" method="post">
+      <div class="frow">
+        <div class="fld" style="max-width:110px">
+          <label>Мощность, Вт</label>
+          <input type="number" name="power_w"
+            value="{{ state.effective_power|int if state.effective_power else (state.config.power_w or 150)|int }}"
+            min="30" max="600" step="5">
+        </div>
+        <button type="submit" class="btn btn-yellow" style="align-self:flex-end">⚡ Задать</button>
+        {% if state.effective_power %}
+        <form action="/reset_power" method="post" style="align-self:flex-end;margin:0">
+          <button type="submit" class="btn btn-ghost">↺ Авто</button>
+        </form>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ЗАГРУЗКА GPX -->
+<div class="sec">
+  <div class="sec-lbl">
+    GPX маршрут
+    {% if state.config.gpx_file %}
+    <span style="color:var(--text);text-transform:none;margin-left:6px">{{ state.config.gpx_file }}</span>
+    {% endif %}
+  </div>
+  <div class="card">
+    <form action="/upload_gpx" method="post" enctype="multipart/form-data">
+      <div class="frow">
+        <div class="fld">
+          <label>Файл .gpx</label>
+          <input type="file" name="gpx_file" accept=".gpx">
+        </div>
+        <button type="submit" class="btn btn-green" style="align-self:flex-end">↑ Загрузить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ПЛАНОВЫЕ СТОЯНКИ -->
+<div class="sec">
+  <div class="sec-lbl">Плановые стоянки (бюджет)</div>
+  <div class="card">
+    <form action="/set_planned_stops" method="post">
+      <div class="frow">
+        <div class="fld" style="max-width:80px">
+          <label>Часов</label>
+          <input type="number" name="budget_h" value="{{ planned_h }}" min="0" max="20" step="1">
+        </div>
+        <div class="fld" style="max-width:80px">
+          <label>Минут</label>
+          <input type="number" name="budget_min" value="{{ planned_min }}" min="0" max="59" step="1">
+        </div>
+        <button type="submit" class="btn btn-blue" style="align-self:flex-end">→ Задать</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- СТОЯНКИ -->
 <div class="sec">
   <div class="sec-lbl">Фактические стоянки</div>
@@ -239,9 +361,13 @@ input:focus{outline:none;border-color:var(--blue)}
           <label>Время МСК</label>
           <input type="time" name="stop_time">
         </div>
-        <div class="fld" style="max-width:80px">
-          <label>Длительность, ч</label>
-          <input type="number" name="stop_duration" placeholder="2.5" min="0" step="0.25">
+        <div class="fld" style="max-width:60px">
+          <label>Часов</label>
+          <input type="number" name="stop_hours" placeholder="1" min="0" step="1">
+        </div>
+        <div class="fld" style="max-width:60px">
+          <label>Минут</label>
+          <input type="number" name="stop_minutes" placeholder="30" min="0" max="59" step="1">
         </div>
         <div class="fld">
           <label>Заметка</label>
@@ -275,24 +401,18 @@ input:focus{outline:none;border-color:var(--blue)}
 <div class="sec"><div class="sec-lbl">Маршрут · каждые 10 км</div></div>
 
 {% for m in model_list %}
+
+{# --- С ДОЖДЁМ --- #}
 <div class="grid" id="grid-{{ m }}" style="{{ 'display:none' if not loop.first }}">
   {% set grid = state.models[m] %}
   {% if grid %}
     {% for pt in grid %}
-      {% set passed  = pt.km < state.current_km %}
-      {% set cur     = (pt.km - state.current_km)|abs < 10 and not passed %}
-      {% set has_stop= pt.stop_here_h > 0 %}
-
-      {% if pt.precip_mm_h < 0.1 %}{% set pc,pi='p0','○'%}
-      {% elif pt.precip_mm_h < 0.5 %}{% set pc,pi='p1','◔'%}
-      {% elif pt.precip_mm_h < 2 %}{% set pc,pi='p2','◑'%}
-      {% else %}{% set pc,pi='p3','●'%}{% endif %}
-
-      {% set hw=pt.headwind_ms %}
-      {% if hw>1 %}{% set wc,wi='hw','↑'%}
-      {% elif hw<-1 %}{% set wc,wi='tw','↓'%}
-      {% else %}{% set wc,wi='sw','→'%}{% endif %}
-
+      {% set passed = pt.km < state.current_km %}
+      {% set cur    = (pt.km - state.current_km)|abs < 10 and not passed %}
+      {% set has_stop = pt.stop_here_h > 0 %}
+      {% if pt.precip_mm_h < 0.1 %}{% set pc,pi='p0','○'%}{% elif pt.precip_mm_h < 0.5 %}{% set pc,pi='p1','◔'%}{% elif pt.precip_mm_h < 2 %}{% set pc,pi='p2','◑'%}{% else %}{% set pc,pi='p3','●'%}{% endif %}
+      {% set hw=pt.headwind_ms %}{% if hw>1 %}{% set wc,wi='hw','↑'%}{% elif hw<-1 %}{% set wc,wi='tw','↓'%}{% else %}{% set wc,wi='sw','→'%}{% endif %}
+      {% set tc=pt.temp_c if pt.temp_c is defined else 0 %}{% if tc<10 %}{% set tcc='tc-cold'%}{% elif tc>25 %}{% set tcc='tc-hot'%}{% else %}{% set tcc='tc-warm'%}{% endif %}
       <div class="kc {% if passed %}passed{% elif cur %}cur{% endif %}{% if has_stop %} has-stop{% endif %}">
         <span class="km-n">{{ pt.km|int }}</span>
         <span class="km-t">{{ pt.wall_time | msk }} <span style="font-size:.68rem;color:var(--muted)">МСК</span></span>
@@ -300,66 +420,52 @@ input:focus{outline:none;border-color:var(--blue)}
         <div class="km-meta">
           <span class="tag {{ pc }}">{{ pi }} {% if pt.precip_mm_h>=0.1 %}{{ '%.1f'|format(pt.precip_mm_h) }} мм/ч{% else %}сухо{% endif %}</span>
           <span class="tag {{ wc }}">{{ wi }} {{ pt.wind_ms }} м/с</span>
+          <span class="tag {{ tcc }}">{{ '%.0f'|format(tc) }}°C</span>
           <span class="tag sw">{{ pt.speed_kmh }} км/ч</span>
         </div>
       </div>
-
-      {# --- Плановая ночёвка --- #}
-      {% if has_stop and 'ночёвка' in pt.stop_reason %}
-        <div class="stop-banner overnight {% if state.overnight_disabled %}overnight-off{% endif %}">
-          <span class="sb-icon">🌙</span>
-          <div class="sb-body">
-            <span class="sb-title">
-              {% if state.overnight_disabled %}Ночёвка отключена{% else %}Плановая ночёвка — {{ '%.0f'|format(pt.stop_here_h) }} ч{% endif %}
-            </span>
-            <span class="sb-detail">
-              км {{ pt.km|int }} · прибытие {{ pt.wall_time | msk }} МСК
-              {% if not state.overnight_disabled %}
-                · подъём ~{{ (pt.wall_time | msk) }}+{{ '%.0f'|format(pt.stop_here_h) }}ч
-              {% endif %}
-            </span>
-            <div class="sb-btn">
-              <form action="/toggle_overnight" method="post" style="display:inline">
-                <button type="submit" class="btn btn-ghost btn-sm">
-                  {% if state.overnight_disabled %}🌙 Включить ночёвку{% else %}✕ Убрать ночёвку{% endif %}
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
-      {# --- Стоянка от дождя --- #}
-      {% elif has_stop %}
-        <div class="stop-banner rain-wait">
-          <span class="sb-icon">🌧</span>
-          <div class="sb-body">
-            <span class="sb-title">Стоянка от дождя — {{ '%.1f'|format(pt.stop_here_h) }} ч</span>
-            <span class="sb-detail">{{ pt.stop_reason }}</span>
-          </div>
-        </div>
-      {% endif %}
-
-      {# --- Фактические стоянки вблизи этого км --- #}
-      {% for s in state.actual_stops %}
-        {% if (s.km - pt.km)|abs < 6 %}
-          <div class="stop-banner actual">
-            <span class="sb-icon">📍</span>
-            <div class="sb-body">
-              <span class="sb-title">Фактическая стоянка — {{ s.duration_h }} ч
-                {% if s.note %}&nbsp;· {{ s.note }}{% endif %}
-              </span>
-              <span class="sb-detail">км {{ s.km|int }}
-                {% if s.time_msk %}&nbsp;· {{ s.time_msk }} МСК{% endif %}
-              </span>
-            </div>
-          </div>
+      {% if has_stop %}
+        {% if 'дождь' in pt.stop_reason %}
+          <div class="stop-banner rain-wait"><span class="sb-icon">🌧</span><div class="sb-body"><span class="sb-title">Стоянка от дождя — {{ '%.1f'|format(pt.stop_here_h*60)|int }} мин</span><span class="sb-detail">{{ pt.stop_reason }}</span></div></div>
+        {% else %}
+          <div class="stop-banner planned"><span class="sb-icon">☕</span><div class="sb-body"><span class="sb-title">Плановый перерыв — {{ '%.0f'|format(pt.stop_here_h*60) }} мин</span><span class="sb-detail">{{ pt.stop_reason }}</span></div></div>
         {% endif %}
-      {% endfor %}
-
+      {% endif %}
+      {% for s in state.actual_stops %}{% if (s.km - pt.km)|abs < 6 %}
+        <div class="stop-banner actual"><span class="sb-icon">📍</span><div class="sb-body"><span class="sb-title">Фактическая стоянка — {{ s.duration_h }} ч{% if s.note %}&nbsp;· {{ s.note }}{% endif %}</span><span class="sb-detail">км {{ s.km|int }}{% if s.time_msk %}&nbsp;· {{ s.time_msk }} МСК{% endif %}</span></div></div>
+      {% endif %}{% endfor %}
     {% endfor %}
-  {% else %}
-    <div class="empty">Идёт расчёт…</div>
-  {% endif %}
+  {% else %}<div class="empty">Идёт расчёт…</div>{% endif %}
 </div>
+
+{# --- БЕЗ ДОЖДЯ --- #}
+<div class="grid" id="grid-{{ m }}-norain" style="display:none">
+  {% set grid = state.models_no_rain[m] %}
+  {% if grid %}
+    {% for pt in grid %}
+      {% set passed = pt.km < state.current_km %}
+      {% set cur    = (pt.km - state.current_km)|abs < 10 and not passed %}
+      {% if pt.precip_mm_h < 0.1 %}{% set pc,pi='p0','○'%}{% elif pt.precip_mm_h < 0.5 %}{% set pc,pi='p1','◔'%}{% elif pt.precip_mm_h < 2 %}{% set pc,pi='p2','◑'%}{% else %}{% set pc,pi='p3','●'%}{% endif %}
+      {% set hw=pt.headwind_ms %}{% if hw>1 %}{% set wc,wi='hw','↑'%}{% elif hw<-1 %}{% set wc,wi='tw','↓'%}{% else %}{% set wc,wi='sw','→'%}{% endif %}
+      {% set tc=pt.temp_c if pt.temp_c is defined else 0 %}{% if tc<10 %}{% set tcc='tc-cold'%}{% elif tc>25 %}{% set tcc='tc-hot'%}{% else %}{% set tcc='tc-warm'%}{% endif %}
+      <div class="kc {% if passed %}passed{% elif cur %}cur{% endif %}">
+        <span class="km-n">{{ pt.km|int }}</span>
+        <span class="km-t">{{ pt.wall_time | msk }} <span style="font-size:.68rem;color:var(--muted)">МСК</span></span>
+        <span class="km-e">+{{ '%.1f'|format(pt.elapsed_h) }} ч</span>
+        <div class="km-meta">
+          <span class="tag {{ pc }}">{{ pi }} {% if pt.precip_mm_h>=0.1 %}{{ '%.1f'|format(pt.precip_mm_h) }} мм/ч{% else %}сухо{% endif %}</span>
+          <span class="tag {{ wc }}">{{ wi }} {{ pt.wind_ms }} м/с</span>
+          <span class="tag {{ tcc }}">{{ '%.0f'|format(tc) }}°C</span>
+          <span class="tag sw">{{ pt.speed_kmh }} км/ч</span>
+        </div>
+      </div>
+      {% for s in state.actual_stops %}{% if (s.km - pt.km)|abs < 6 %}
+        <div class="stop-banner actual"><span class="sb-icon">📍</span><div class="sb-body"><span class="sb-title">Фактическая стоянка — {{ s.duration_h }} ч{% if s.note %}&nbsp;· {{ s.note }}{% endif %}</span><span class="sb-detail">км {{ s.km|int }}{% if s.time_msk %}&nbsp;· {{ s.time_msk }} МСК{% endif %}</span></div></div>
+      {% endif %}{% endfor %}
+    {% endfor %}
+  {% else %}<div class="empty">Идёт расчёт…</div>{% endif %}
+</div>
+
 {% endfor %}
 
 <!-- FAB пересчёта -->
@@ -367,8 +473,10 @@ input:focus{outline:none;border-color:var(--blue)}
   <button type="submit" class="fab" title="Пересчитать">↻</button>
 </form>
 
+<hr class="divider">
+
 <!-- Кнопка сброса стейта -->
-<div style="margin:20px 14px 0;padding-bottom:20px">
+<div style="margin:14px 14px 0;padding-bottom:20px">
   <form action="/clear_state" method="post"
         onsubmit="return confirm('Сбросить позицию, стоянки и калибровку мощности?')">
     <button type="submit" class="btn btn-ghost btn-sm" style="width:100%;color:var(--red);border-color:var(--red)">
@@ -379,13 +487,55 @@ input:focus{outline:none;border-color:var(--blue)}
 
 <script>
 const MODELS = {{ model_list|tojson }};
+let _activeModel = MODELS[0];
+let _rainMode = true;
+
+function _showGrids() {
+  MODELS.forEach(m => {
+    document.getElementById('grid-'+m).style.display          = (m===_activeModel && _rainMode)  ? '' : 'none';
+    document.getElementById('grid-'+m+'-norain').style.display = (m===_activeModel && !_rainMode) ? '' : 'none';
+  });
+}
+
 function switchModel(name, btn) {
   document.querySelectorAll('.mbtn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  MODELS.forEach(m=>{
-    document.getElementById('grid-'+m).style.display = m===name?'':'none';
-  });
+  _activeModel = name;
+  _showGrids();
 }
+
+function switchRain(rain) {
+  _rainMode = rain;
+  document.getElementById('rain-on').classList.toggle('active', rain);
+  document.getElementById('rain-off').classList.toggle('active', !rain);
+  _showGrids();
+}
+
+// AJAX-опрос: обновляем метки времени без перезагрузки
+function toMsk(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  }).replace(',', '');
+}
+
+let _lastCalc = null, _lastWeather = null;
+function pollState() {
+  fetch('/api/state').then(r=>r.json()).then(s=>{
+    if (s.last_calc && s.last_calc !== _lastCalc) {
+      _lastCalc = s.last_calc;
+      document.getElementById('ts-sim').textContent = 'симуляция ' + toMsk(s.last_calc);
+    }
+    if (s.last_weather_fetch && s.last_weather_fetch !== _lastWeather) {
+      _lastWeather = s.last_weather_fetch;
+      document.getElementById('ts-weather').textContent = 'погода ' + toMsk(s.last_weather_fetch);
+    }
+  }).catch(()=>{});
+}
+setInterval(pollState, 3000);
 setTimeout(()=>location.reload(), 120_000);
 </script>
 </body>

@@ -34,6 +34,8 @@ class WeatherPoint:
     wind_speed: List[float]   # м/с
     wind_dir: List[float]     # откуда дует (метеорологическое соглашение)
     precip: List[float]       # мм/ч
+    temp: List[float] = field(default_factory=list)  # °C
+    model_name: str = ""      # фактическая модель (для best_match)
 
 
 @dataclass
@@ -47,6 +49,7 @@ class RidePoint:
     precip_mm_h: float
     wind_ms: float
     headwind_ms: float
+    temp_c: float = 0.0
     stop_here_h: float = 0.0    # длительность стоянки ПОСЛЕ этой точки
     stop_reason: str = ""
 
@@ -68,6 +71,10 @@ def parse_gpx(path: str) -> List[Segment]:
 
     if len(points) < 2:
         raise ValueError("GPX должен содержать минимум 2 точки")
+
+    has_elevation = any(p.elevation is not None for p in points)
+    if not has_elevation:
+        print("[gpx] ВНИМАНИЕ: GPX не содержит высот — уклон не считается, рельеф игнорируется")
 
     segments = []
     cum = 0.0
@@ -166,14 +173,38 @@ def solve_speed(power_w: float, grade: float, headwind_ms: float,
 # Погода
 # ---------------------------------------------------------------------------
 
-def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
-                           model: str = "icon_seamless") -> List[WeatherPoint]:
-    """Параллельный фетч погоды — все точки одновременно."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+def _sample_segments_nonlinear(segments: List[Segment],
+                                current_km: float = 0.0) -> List[Segment]:
+    """
+    Нелинейная сетка точек погоды:
+    - ближайшие 100 км от current_km: каждые 4 км
+    - дальше: шаг плавно растёт до 25 км на дистанции +100 км, затем 25 км
+    """
+    NEAR_STEP = 4.0     # км — ближняя зона
+    FAR_STEP  = 25.0    # км — дальняя зона
+    NEAR_DIST = 100.0   # км — ширина ближней зоны
+    RAMP_DIST = 100.0   # км — дистанция перехода к FAR_STEP
 
-    total = segments[-1].cum_dist_m
-    targets = [i * total / (n_samples - 1) for i in range(n_samples)]
-    sample_segs = [min(segments, key=lambda s: abs(s.cum_dist_m - t)) for t in targets]
+    total_km = segments[-1].cum_dist_m / 1000.0
+
+    targets_km: list[float] = []
+    pos = 0.0
+    while pos <= total_km:
+        targets_km.append(pos)
+        dist_from_near = pos - (current_km + NEAR_DIST)
+        if dist_from_near <= 0:
+            step = NEAR_STEP
+        else:
+            t = min(dist_from_near / RAMP_DIST, 1.0)
+            step = NEAR_STEP + t * (FAR_STEP - NEAR_STEP)
+        pos += step
+    if targets_km[-1] < total_km:
+        targets_km.append(total_km)
+
+    sample_segs = [
+        min(segments, key=lambda s, t=t: abs(s.cum_dist_m / 1000.0 - t))
+        for t in targets_km
+    ]
 
     seen, unique = set(), []
     for s in sample_segs:
@@ -181,11 +212,22 @@ def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
         if key not in seen:
             seen.add(key)
             unique.append(s)
+    return unique
+
+
+def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
+                           model: str = "icon_seamless",
+                           step_km: float = 5.0,
+                           current_km: float = 0.0) -> List[WeatherPoint]:
+    """Параллельный фетч погоды — нелинейная сетка точек."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    unique = _sample_segments_nonlinear(segments, current_km)
 
     def _fetch_one(seg):
         params = {
             "latitude": seg.lat, "longitude": seg.lon,
-            "hourly": "wind_speed_10m,wind_direction_10m,precipitation",
+            "hourly": "wind_speed_10m,wind_direction_10m,precipitation,temperature_2m",
             "wind_speed_unit": "ms", "timezone": "UTC",
             "forecast_days": 3, "models": model,
         }
@@ -194,21 +236,29 @@ def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
                              params=params, timeout=15)
             if r.status_code == 429:
                 import time as _t
-                _t.sleep(2 ** attempt)   # 1, 2, 4, 8 сек
+                _t.sleep(2 ** attempt)
                 continue
             r.raise_for_status()
-            h = r.json()["hourly"]
+            data = r.json()
+            h = data["hourly"]
             times = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
                      for t in h["time"]]
+            precip = [max(0.0, p) if p is not None else 0.0
+                      for p in h["precipitation"]]
+            temp = [t if t is not None else 0.0
+                    for t in h.get("temperature_2m", [0.0] * len(times))]
+            # Для best_match API возвращает поле "model" с реальным именем модели
+            actual_model = data.get("model", model)
             return WeatherPoint(lat=seg.lat, lon=seg.lon, times=times,
                                 wind_speed=h["wind_speed_10m"],
                                 wind_dir=h["wind_direction_10m"],
-                                precip=h["precipitation"])
-        r.raise_for_status()   # последняя попытка — пробрасываем исключение
+                                precip=precip,
+                                temp=temp,
+                                model_name=actual_model)
+        r.raise_for_status()
 
     result = [None] * len(unique)
-    # max_workers=3 — не ронять Open-Meteo rate limit
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         futures = {ex.submit(_fetch_one, s): i for i, s in enumerate(unique)}
         for fut in as_completed(futures):
             result[futures[fut]] = fut.result()
@@ -264,20 +314,23 @@ def _nearest_weather(wps: List[WeatherPoint], lat: float, lon: float) -> Weather
     return min(wps, key=lambda w: (w.lat - lat) ** 2 + (w.lon - lon) ** 2)
 
 
-def _interp(wp: WeatherPoint, t: datetime) -> Tuple[float, float, float]:
-    """Линейная интерполяция погоды в момент t."""
+def _interp(wp: WeatherPoint, t: datetime) -> Tuple[float, float, float, float]:
+    """Линейная интерполяция погоды в момент t. Возвращает (wind_ms, wind_dir, precip, temp_c)."""
     ts = wp.times
+    temp = wp.temp if wp.temp else [0.0] * len(ts)
+
     if t <= ts[0]:
-        return wp.wind_speed[0], wp.wind_dir[0], wp.precip[0]
+        return wp.wind_speed[0], wp.wind_dir[0], wp.precip[0], temp[0]
     if t >= ts[-1]:
-        return wp.wind_speed[-1], wp.wind_dir[-1], wp.precip[-1]
+        return wp.wind_speed[-1], wp.wind_dir[-1], wp.precip[-1], temp[-1]
     for i in range(len(ts) - 1):
         if ts[i] <= t <= ts[i + 1]:
             f = (t - ts[i]).total_seconds() / 3600
             ws = wp.wind_speed[i] + f * (wp.wind_speed[i + 1] - wp.wind_speed[i])
             pr = wp.precip[i] + f * (wp.precip[i + 1] - wp.precip[i])
-            return ws, wp.wind_dir[i], max(0.0, pr)
-    return wp.wind_speed[-1], wp.wind_dir[-1], wp.precip[-1]
+            tc = temp[i] + f * (temp[i + 1] - temp[i])
+            return ws, wp.wind_dir[i], max(0.0, pr), tc
+    return wp.wind_speed[-1], wp.wind_dir[-1], wp.precip[-1], temp[-1]
 
 
 def precip_at_location_future(wp: WeatherPoint, from_time: datetime,
@@ -304,13 +357,13 @@ def simulate(
     cda: float = 0.36,
     crr: float = 0.004,
     time_limit_h: float = 40.0,
-    overnight_km: float = 300.0,
-    overnight_h: float = 8.0,
     rain_threshold: float = 0.5,
     max_rain_wait_h: float = 3.0,
     current_km: float = 0.0,
     sample_every_km: float = 1.0,
-    route_start_time: Optional[datetime] = None,  # фиксированный старт для elapsed_h
+    route_start_time: Optional[datetime] = None,
+    actual_stops: Optional[list] = None,        # [{"km": float, "duration_h": float}, ...]
+    planned_stop_budget_h: float = 0.0,         # суммарный бюджет плановых коротких стоянок
 ) -> List[RidePoint]:
     """
     Симулирует поездку сегмент за сегментом.
@@ -322,15 +375,33 @@ def simulate(
     if not weather_points:
         raise ValueError("Нет данных о погоде")
 
+    # Фактические стоянки, отсортированные по км — применяются когда проходим мимо
+    _pending_stops = sorted(
+        [s for s in (actual_stops or []) if s.get("km", 0) >= current_km],
+        key=lambda s: s["km"]
+    )
+    _stop_idx = 0
+
+    # Плановые стоянки: остаток бюджета после вычета прошлых фактических
+    _past_actual_h = sum(s.get("duration_h", 0) for s in (actual_stops or [])
+                         if s.get("km", 0) < current_km)
+    _plan_budget = max(0.0, planned_stop_budget_h - _past_actual_h)
+    # Грубая оценка оставшегося времени езды для расчёта кол-ва перерывов
+    _ride_h_est = sum(
+        (s.dist_m / max(solve_speed(power_w, s.grade, 0, mass_kg, cda, crr), 0.3)) / 3600
+        for s in segments if s.cum_dist_m / 1000 >= current_km
+    )
+    _n_breaks = max(1, int(_ride_h_est))
+    _break_h = _plan_budget / _n_breaks if _plan_budget > 0 else 0.0
+    _ride_h_since_break = 0.0
+
     current_time = start_time
     # Смещение elapsed_h: сколько часов прошло от route_start до start_time
     _route_start = route_start_time if route_start_time is not None else start_time
     elapsed_h = (start_time - _route_start).total_seconds() / 3600.0
     last_sample_km = current_km - 1.0
 
-    overnight_done = False
     in_rain_stop = False
-    rain_stop_budget_h = time_limit_h  # будет уточнён
 
     ride: List[RidePoint] = []
 
@@ -340,8 +411,15 @@ def simulate(
         if cum_km < current_km:
             continue
 
+        # Применяем фактические стоянки, которые мы проехали на этом км
+        while _stop_idx < len(_pending_stops) and _pending_stops[_stop_idx]["km"] <= cum_km:
+            dur = _pending_stops[_stop_idx].get("duration_h", 0)
+            current_time += timedelta(hours=dur)
+            elapsed_h += dur
+            _stop_idx += 1
+
         wp = _nearest_weather(weather_points, seg.lat, seg.lon)
-        ws, wd, precip = _interp(wp, current_time)
+        ws, wd, precip, temp_c = _interp(wp, current_time)
         hw = effective_headwind(ws, wd, seg.bearing_deg)
         speed = solve_speed(power_w, seg.grade, hw, mass_kg, cda, crr)
         seg_time_h = (seg.dist_m / speed) / 3600.0
@@ -349,16 +427,20 @@ def simulate(
         stop_h = 0.0
         stop_reason = ""
 
-        # --- Ночёвка ---
-        if (not overnight_done
-                and cum_km >= overnight_km
-                and (time_limit_h - elapsed_h) > overnight_h + 1):
-            stop_h = overnight_h
-            stop_reason = "ночёвка"
-            overnight_done = True
+        # --- Плановый перерыв (раз в час езды) ---
+        _ride_h_since_break += seg_time_h
+        if _ride_h_since_break >= 1.0 and _plan_budget > 0:
+            this_break = min(_break_h, _plan_budget)
+            stop_h += this_break
+            _plan_budget = max(0.0, _plan_budget - this_break)
+            _ride_h_since_break = 0.0
+            if stop_reason:
+                stop_reason += f" + перерыв {this_break*60:.0f}мин"
+            else:
+                stop_reason = f"перерыв {this_break*60:.0f}мин"
 
         # --- Дождевая остановка ---
-        elif precip >= rain_threshold and not in_rain_stop:
+        if precip >= rain_threshold and not in_rain_stop:
             future = precip_at_location_future(wp, current_time, max_rain_wait_h)
             # Ищем момент, когда дождь прекратится
             clear_h: Optional[float] = None
@@ -390,6 +472,7 @@ def simulate(
                 precip_mm_h=round(precip, 2),
                 wind_ms=round(ws, 1),
                 headwind_ms=round(hw, 2),
+                temp_c=round(temp_c, 1),
                 stop_here_h=round(stop_h, 2),
                 stop_reason=stop_reason,
             ))
@@ -437,7 +520,7 @@ def _sim_riding_time(segments: List[Segment], from_km: float, to_km: float,
         if km < from_km or km > to_km:
             continue
         wp = _nearest_weather(weather_points, s.lat, s.lon)
-        ws, wd, _ = _interp(wp, current_time)
+        ws, wd, _, _tc = _interp(wp, current_time)
         hw = effective_headwind(ws, wd, s.bearing_deg)
         v = solve_speed(power_w, s.grade, hw, mass_kg, cda, crr)
         dt = s.dist_m / v / 3600.0
@@ -490,6 +573,7 @@ def ride_to_dict(ride: List[RidePoint]) -> list:
             "precip_mm_h": rp.precip_mm_h,
             "wind_ms": rp.wind_ms,
             "headwind_ms": rp.headwind_ms,
+            "temp_c": rp.temp_c,
             "stop_here_h": rp.stop_here_h,
             "stop_reason": rp.stop_reason,
         })
