@@ -215,54 +215,68 @@ def _sample_segments_nonlinear(segments: List[Segment],
     return unique
 
 
+def weather_query_segments(segments: List[Segment],
+                           current_km: float = 0.0) -> List[Segment]:
+    """Сегменты-точки для запроса погоды (нелинейная сетка). Детерминированно
+    по (segments, current_km) — порядок стабилен, годится для индексной сверки."""
+    return _sample_segments_nonlinear(segments, current_km)
+
+
+def _fetch_weather_one(seg: Segment, model: str) -> WeatherPoint:
+    params = {
+        "latitude": seg.lat, "longitude": seg.lon,
+        "hourly": "wind_speed_10m,wind_direction_10m,precipitation,temperature_2m",
+        "wind_speed_unit": "ms", "timezone": "UTC",
+        "forecast_days": 3, "models": model,
+    }
+    for attempt in range(4):
+        r = requests.get("https://api.open-meteo.com/v1/forecast",
+                         params=params, timeout=15)
+        if r.status_code == 429:
+            import time as _t
+            _t.sleep(2 ** attempt)
+            continue
+        r.raise_for_status()
+        data = r.json()
+        h = data["hourly"]
+        times = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
+                 for t in h["time"]]
+        precip = [max(0.0, p) if p is not None else 0.0
+                  for p in h["precipitation"]]
+        temp = [t if t is not None else 0.0
+                for t in h.get("temperature_2m", [0.0] * len(times))]
+        # Для best_match API возвращает поле "model" с реальным именем модели
+        actual_model = data.get("model", model)
+        return WeatherPoint(lat=seg.lat, lon=seg.lon, times=times,
+                            wind_speed=h["wind_speed_10m"],
+                            wind_dir=h["wind_direction_10m"],
+                            precip=precip,
+                            temp=temp,
+                            model_name=actual_model)
+    r.raise_for_status()
+
+
+def fetch_weather_points(seg_list: List[Segment],
+                         model: str = "icon_seamless") -> List[WeatherPoint]:
+    """Параллельный фетч погоды по заданному списку сегментов.
+    Результат выровнен по индексам seg_list."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    result: List[WeatherPoint] = [None] * len(seg_list)
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_weather_one, s, model): i
+                   for i, s in enumerate(seg_list)}
+        for fut in as_completed(futures):
+            result[futures[fut]] = fut.result()
+    return result
+
+
 def fetch_weather_parallel(segments: List[Segment], n_samples: int = 10,
                            model: str = "icon_seamless",
                            step_km: float = 5.0,
                            current_km: float = 0.0) -> List[WeatherPoint]:
-    """Параллельный фетч погоды — нелинейная сетка точек."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    unique = _sample_segments_nonlinear(segments, current_km)
-
-    def _fetch_one(seg):
-        params = {
-            "latitude": seg.lat, "longitude": seg.lon,
-            "hourly": "wind_speed_10m,wind_direction_10m,precipitation,temperature_2m",
-            "wind_speed_unit": "ms", "timezone": "UTC",
-            "forecast_days": 3, "models": model,
-        }
-        for attempt in range(4):
-            r = requests.get("https://api.open-meteo.com/v1/forecast",
-                             params=params, timeout=15)
-            if r.status_code == 429:
-                import time as _t
-                _t.sleep(2 ** attempt)
-                continue
-            r.raise_for_status()
-            data = r.json()
-            h = data["hourly"]
-            times = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
-                     for t in h["time"]]
-            precip = [max(0.0, p) if p is not None else 0.0
-                      for p in h["precipitation"]]
-            temp = [t if t is not None else 0.0
-                    for t in h.get("temperature_2m", [0.0] * len(times))]
-            # Для best_match API возвращает поле "model" с реальным именем модели
-            actual_model = data.get("model", model)
-            return WeatherPoint(lat=seg.lat, lon=seg.lon, times=times,
-                                wind_speed=h["wind_speed_10m"],
-                                wind_dir=h["wind_direction_10m"],
-                                precip=precip,
-                                temp=temp,
-                                model_name=actual_model)
-        r.raise_for_status()
-
-    result = [None] * len(unique)
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(_fetch_one, s): i for i, s in enumerate(unique)}
-        for fut in as_completed(futures):
-            result[futures[fut]] = fut.result()
-    return result
+    """Параллельный фетч погоды — нелинейная сетка точек.
+    (n_samples / step_km не используются — сетка строится по current_km.)"""
+    return fetch_weather_points(weather_query_segments(segments, current_km), model)
 
 
 def fetch_weather(segments: List[Segment], n_samples: int = 10,

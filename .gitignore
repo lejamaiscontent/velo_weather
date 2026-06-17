@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Операционные логи и архивы заездов (живут на VPS, не в репо)
+*.jsonl
+archive/
+
+# IDE
+.idea/workspace.xml

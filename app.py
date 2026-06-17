@@ -7,6 +7,8 @@ Flask-сервер велосипедного оптимизатора.
 """
 
 import json
+import math
+import random
 import threading
 import time
 import os
@@ -107,9 +109,10 @@ MODEL_SCHED_CFG = {
 # Состояние расписания per-model (живёт только в памяти, сбрасывается при рестарте)
 _model_sched: dict = {m: {
     "last_update_at":  None,  # datetime: последнее обнаруженное обновление модели
-    "last_fetch_at":   None,  # datetime: последний фетч
+    "last_fetch_at":   None,  # datetime: последний фетч (полный или проба)
     "first_fetch_at":  None,  # datetime: самый первый фетч (для расчёта фазы)
-    "last_weather":    None,  # List[WeatherPoint]: снепшот последнего фетча
+    "last_weather":    None,  # List[WeatherPoint]: снепшот последнего ПОЛНОГО фетча
+    "last_weather_km": None,  # float: current_km, при котором снят снепшот (для сверки индексов пробы)
 } for m in MODELS}
 
 # ---------------------------------------------------------------------------
@@ -287,6 +290,23 @@ def _get_power(cfg: dict) -> float:
 # Детектор изменений снепшотов погоды
 # ---------------------------------------------------------------------------
 
+def _point_diffs(op, np_) -> list:
+    """Diff'ы между двумя WeatherPoint: ветёр + осадки (×2), каждые 6ч прогноза."""
+    n = min(len(op.wind_speed), len(np_.wind_speed))
+    out = []
+    for i in range(6, n, 6):
+        out.append(abs(op.wind_speed[i] - np_.wind_speed[i]))
+        out.append(abs(op.precip[i]     - np_.precip[i]) * 2)
+    return out
+
+
+def _diffs_exceed(diffs: list) -> bool:
+    """Порог «значимого» отличия (новый прогон, а не погрешность аппроксимации)."""
+    if not diffs:
+        return True
+    return max(diffs) > 0.5 or (sum(diffs) / len(diffs)) > 0.15
+
+
 def _weather_changed(old: list, new: list) -> bool:
     """True если новые данные значимо отличаются от старых (не просто погрешность)."""
     if old is None or not old or len(old) != len(new):
@@ -294,13 +314,40 @@ def _weather_changed(old: list, new: list) -> bool:
     step = max(1, len(old) // 8)
     diffs = []
     for op, np_ in zip(old[::step], new[::step]):
-        n = min(len(op.wind_speed), len(np_.wind_speed))
-        for i in range(6, n, 6):   # каждые 6 часов прогноза
-            diffs.append(abs(op.wind_speed[i] - np_.wind_speed[i]))
-            diffs.append(abs(op.precip[i]     - np_.precip[i]) * 2)
-    if not diffs:
-        return True
-    return max(diffs) > 0.5 or (sum(diffs) / len(diffs)) > 0.15
+        diffs += _point_diffs(op, np_)
+    return _diffs_exceed(diffs)
+
+
+def _probe_model(model: str, now: datetime, segments: list):
+    """
+    Дешёвая проверка обновления модели: фетчим A = min(20, ceil(√N)) случайных
+    точек сетки и сверяем с теми же индексами последнего полного снепшота.
+
+    Возвращает (changed, a):
+      changed=False — модель точно не обновилась, полный фетч не нужен;
+      changed=True  — обнаружено отличие, нужен полный фетч;
+      changed=None  — нет пригодного снепшота / сетка разъехалась / ошибка сети.
+    """
+    s = _model_sched[model]
+    old = s["last_weather"]
+    base_km = s["last_weather_km"]
+    if not old or base_km is None:
+        return None, 0
+    grid = core.weather_query_segments(segments, base_km)
+    n = len(grid)
+    if n != len(old):
+        return None, 0            # сетка изменилась (другой current_km) — полный фетч
+    a = min(20, math.ceil(math.sqrt(n)))
+    idxs = random.sample(range(n), a)
+    try:
+        probed = core.fetch_weather_points([grid[i] for i in idxs], model)
+    except Exception:
+        return None, a            # сеть подвела — пусть решает полный фетч
+    _inc_api_calls(len(probed))
+    diffs = []
+    for j, i in enumerate(idxs):
+        diffs += _point_diffs(old[i], probed[j])
+    return _diffs_exceed(diffs), a
 
 
 def _should_fetch_model(model: str, now: datetime) -> bool:
@@ -332,8 +379,11 @@ def _should_fetch_model(model: str, now: datetime) -> bool:
             return mins(lf) >= c["poll_interval_min"]
 
 
-def _log_weather_event(model: str, is_new: bool, now: datetime):
-    """Пишет событие в weather_log.jsonl."""
+def _log_weather_event(model: str, is_new: bool, now: datetime,
+                       check: str = "full", points: int = None):
+    """Пишет событие в weather_log.jsonl.
+    check  — 'probe' (дешёвая проверка A точек) или 'full' (полный фетч сетки);
+    points — сколько точек реально запрошено в этой проверке."""
     s = _model_sched[model]
     c = MODEL_SCHED_CFG[model]
     lu = s["last_update_at"]
@@ -357,6 +407,8 @@ def _log_weather_event(model: str, is_new: bool, now: datetime):
         "model":      model,
         "new_run":    is_new,
         "mode":       mode,
+        "check":      check,
+        "points":     points,
         "last_update": lu.isoformat() if lu else None,
     }
     with open(WEATHER_LOG, "a", encoding="utf-8") as f:
@@ -367,7 +419,7 @@ def _log_weather_event(model: str, is_new: bool, now: datetime):
     if is_new:
         next_eta = now + timedelta(hours=c["quiet_h"])
         next_note = f" → тихая зона до {next_eta.strftime('%H:%M')} UTC"
-    print(f"[sched] {model}: {label}, режим={mode}{next_note}")
+    print(f"[sched] {model}: {label}, режим={mode} ({check}/{points}т){next_note}")
 
 
 # ---------------------------------------------------------------------------
@@ -414,13 +466,14 @@ def _fetch_models(models: list, now: datetime) -> bool:
 
             if _model_sched[m]["first_fetch_at"] is None:
                 _model_sched[m]["first_fetch_at"] = now
-            _model_sched[m]["last_fetch_at"] = now
+            _model_sched[m]["last_fetch_at"]  = now
             _model_sched[m]["last_weather"]   = new_wp
+            _model_sched[m]["last_weather_km"] = current_km
             if is_new:
                 _model_sched[m]["last_update_at"] = now
                 any_new = True
 
-            _log_weather_event(m, is_new, now)
+            _log_weather_event(m, is_new, now, check="full", points=len(new_wp))
 
         with _lock:
             for m, wp in fetched.items():
@@ -555,18 +608,37 @@ def _bg_loop():
     while True:
         time.sleep(60)
         now = datetime.now(timezone.utc)
-        to_fetch = [m for m in MODELS if _should_fetch_model(m, now)]
-        if not to_fetch:
+        due = [m for m in MODELS if _should_fetch_model(m, now)]
+        if not due:
             continue
         if not _fetch_lock.acquire(blocking=False):
             print("[bg] Фетч уже идёт, пропускаем тик.")
             continue
+        did_full = False
         try:
-            _fetch_models(to_fetch, now)
+            gpx_path = _load_config()["gpx_file"]
+            if not Path(gpx_path).exists():
+                with _lock:
+                    _state["last_error"] = f"GPX не найден: {gpx_path}"
+            else:
+                segments = core.parse_gpx(gpx_path)
+                need_full = []
+                for m in due:
+                    # Дешёвая проба: если модель не обновилась — полный фетч пропускаем
+                    changed, a = _probe_model(m, now, segments)
+                    if changed is False:
+                        _model_sched[m]["last_fetch_at"] = now
+                        _log_weather_event(m, False, now, check="probe", points=a)
+                    else:
+                        need_full.append(m)
+                if need_full:
+                    _fetch_models(need_full, now)
+                    did_full = True
         finally:
             _fetch_lock.release()
-        # Пересчитываем симуляцию после любого успешного фетча
-        simulate_only()
+        # Симуляцию пересчитываем только если кеш погоды реально обновился
+        if did_full:
+            simulate_only()
 
 
 # ---------------------------------------------------------------------------
