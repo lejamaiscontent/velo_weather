@@ -8,6 +8,7 @@ CLI:  python analysis/parse_ride.py <файл>   — печатает сводк
 """
 import os
 import sys
+import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
