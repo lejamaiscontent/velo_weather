@@ -15,12 +15,18 @@
 
 | Файл | Описание |
 |------|----------|
-| `core.py` | GPX-парсинг, физика, погода, симуляция с планировщиком остановок |
-| `app.py` | Flask-сервер; фоновый поток пересчёта; API `/api/state`, `/api/ride` |
-| `templates/index.html` | Веб-морда: 10км-таблица, форма обновления текущего км |
+| `core.py` | GPX-парсинг, физика, погода (фетч подсписка точек), симуляция с планировщиком остановок |
+| `app.py` | Flask-сервер; умный фоновый цикл фетча; дешёвая проба обновления; архив заезда; API |
+| `templates/index.html` | Веб-морда: 10км-таблица, обе модели, формы позиции/мощности/стоянок |
 | `config.json` | Параметры маршрута (GPX, старт, мощность и т.д.) |
 | `state.json` | Кешированное состояние (генерируется автоматически) |
-| `requirements.txt` | `gpxpy`, `requests`, `flask` |
+| `KNOWLEDGE.md` | Накопленные факты: расписание моделей, проба, архив, анализ логов |
+| `TODO.md` | Список задач (активные/сделано) |
+| `weather_log.jsonl` | Лог проверок погоды (`new_run`, `mode`, `check`, `points`) |
+| `weather_now.jsonl` | Стоп-гап: текущая погода по точкам маршрута раз в 30 мин |
+| `power_log.jsonl` | Лог мощности (ручная/калибровка + входы калибровки) |
+| `archive/<ride_id>/` | Архив заезда: `forecast.jsonl`, `position.jsonl`, `meta.json` |
+| `requirements.txt` | `gpxpy`, `requests`, `flask` (+ опц. `timezonefinder`, `backports.zoneinfo` на 3.8) |
 
 ## Быстрый старт
 
@@ -43,13 +49,16 @@ python app.py
 | `cda` | 0.36 | Аэродинамика CdA, м² |
 | `crr` | 0.004 | Коэффициент качения |
 | `time_limit_h` | 40 | Лимит времени, ч |
-| `overnight_km` | 300 | Км ночёвки |
-| `overnight_h` | 8 | Длительность ночёвки, ч |
 | `rain_threshold` | 0.5 | Осадки для остановки, мм/ч |
 | `max_rain_wait_h` | 3.0 | Макс. ожидание дождя, ч |
-| `weather_samples` | 10 | Точек для запросов погоды |
-| `weather_model` | `icon_seamless` | `icon_seamless` или `ecmwf_ifs025` |
-| `recalc_interval_min` | 30 | Интервал фонового пересчёта |
+| `planned_stop_budget_h` | 0.0 | Суммарный бюджет плановых стоянок, ч |
+| `archive_enabled` | `true` | Писать архив заезда (`archive/<ride_id>/`) |
+| `archive_dir` | `archive` | Каталог архива |
+| `weather_samples` | 10 | *(legacy — сетка нелинейная, не используется)* |
+| `weather_model` | `icon_seamless` | *(legacy — обе модели считаются параллельно)* |
+| `recalc_interval_min` | 30 | *(legacy — цикл умный, оставлено для совместимости)* |
+
+Ночёвка (`overnight_*`) удалена из расчётов и UI (TODO #7).
 
 ## Архитектура core.py
 
@@ -78,6 +87,19 @@ API: **Open-Meteo** (без ключа, бесплатно, ≤3 дня)
 | `/recalc` | POST | Форсировать пересчёт |
 | `/api/state` | GET | JSON: grid, last_calc, error |
 | `/api/ride` | GET | JSON: полная симуляция по км |
+
+## Фоновый цикл и сбор данных
+
+- **Умное расписание фетча** (`_should_fetch_model`): тихая зона → медленный/быстрый поллинг. Параметры и логика — в `KNOWLEDGE.md`.
+- **Дешёвая проба** (`_probe_model`): перед полным фетчем проверяет обновление модели по `A = min(20, ⌈√N⌉)` случайным точкам сетки; полный фетч (всех точек) — только при обнаружении изменения. Экономит ~6–10× запросов.
+- **Две модели** (`icon_seamless`, `ecmwf_ifs025`) считаются параллельно; в UI — вкладки.
+- **Логи:** `weather_log.jsonl` (каждая проверка: `new_run/mode/check/points`), `weather_now.jsonl` (текущая погода по маршруту раз в 30 мин, из кеша — без API), `power_log.jsonl` (мощность + входы калибровки).
+- **Архив заезда** `archive/<ride_id>/`: `forecast.jsonl` (снимок прогноза на каждый пересчёт, с триггером), `position.jsonl` (факт. фиксы + прогноз, под которым ехали + lead), `meta.json` (config/GPX-sha1/git — реплей). Цель — офлайн-отладка точности скорости/ETA/мощности. Формат — в `KNOWLEDGE.md`.
+
+## Деплой (VPS)
+
+- Активный сервис — **`velo_weather`** (`sudo systemctl restart velo_weather`); `velo.service` — погашенный дубликат.
+- `scp core.py app.py vps_griha3212:/opt/velo_weather/`, шаблоны — в `templates/`. Подробности — в `KNOWLEDGE.md`.
 
 ## Известные ограничения
 - Ветер на высоте 10м, рельефного укрытия нет

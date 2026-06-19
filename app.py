@@ -97,6 +97,7 @@ MODELS = ["icon_seamless", "ecmwf_ifs025"]
 
 POWER_LOG       = Path("power_log.jsonl")
 WEATHER_LOG     = Path("weather_log.jsonl")
+WEATHER_NOW_LOG = Path("weather_now.jsonl")   # стоп-гап #30: ряд текущей погоды по местности
 
 # Расписание фетча для каждой модели
 MODEL_SCHED_CFG = {
@@ -400,6 +401,31 @@ def _archive_position(cfg: dict, km: float, pos_iso: str,
         _archive_append(cfg, "position.jsonl", entry)
     except Exception as e:
         print(f"[archive] position не записан: {e}")
+
+
+def _snapshot_current_weather():
+    """Стоп-гап (#30): раз в 30 мин складываем ТЕКУЩУЮ погоду по точкам маршрута
+    из актуального кеша прогноза — это свежайший доступный nowcast, нулевой расход API.
+    Копит ряд погоды-«истины» для местности (сверка с прогнозами/физикой)."""
+    try:
+        with _lock:
+            cache = dict(_state.get("weather_cache", {}))
+        if not cache:
+            return
+        now = datetime.now(timezone.utc)
+        model = "icon_seamless" if "icon_seamless" in cache else next(iter(cache))
+        pts = []
+        for wp in cache[model]:
+            ws, wd, pr, tc = core._interp(wp, now)
+            pts.append({"lat": round(wp.lat, 4), "lon": round(wp.lon, 4),
+                        "wind_ms": round(ws, 1), "wind_dir": round(wd),
+                        "precip_mm_h": round(pr, 2), "temp_c": round(tc, 1)})
+        entry = {"t": now.isoformat(), "model": model, "points": pts}
+        with open(WEATHER_NOW_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        print(f"[now] снимок текущей погоды: {len(pts)} точек ({model})")
+    except Exception as e:
+        print(f"[now] снимок не записан: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -768,9 +794,14 @@ def _bg_loop():
     Умный фоновый цикл: проверяет раз в минуту, нужно ли фетчить каждую модель.
     Расписание: тихая зона → медленный поллинг → быстрый поллинг при ожидании нового прогона.
     """
+    last_now = None
     while True:
         time.sleep(60)
         now = datetime.now(timezone.utc)
+        # Стоп-гап #30: снимок текущей погоды каждые 30 мин (из кеша, без запросов к API)
+        if last_now is None or (now - last_now).total_seconds() >= 1800:
+            _snapshot_current_weather()
+            last_now = now
         due = [m for m in MODELS if _should_fetch_model(m, now)]
         if not due:
             continue
