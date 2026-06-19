@@ -164,9 +164,36 @@
 
 ---
 
+## Архив статистики заезда (#26, добавлено 19.06.2026)
+
+Цель — офлайн-отладка: совпадение прогнозов после обновления погоды, точность прогноза
+скорости, точность перерасчёта мощности. Пишется на VPS, стягивается `scp` как логи.
+
+**Папка:** `archive/<ride_id>/`, где `ride_id` = `start_time[:16]` с заменой `:`→`-`
+(напр. `2026-06-20T05-00`). Управляется конфигом: `archive_enabled` (default true), `archive_dir`.
+
+| Файл | Когда пишется | Содержимое |
+|------|---------------|-----------|
+| `meta.json` | один раз на заезд | config, GPX (имя+sha1+total_km), git-commit, модели — для реплея |
+| `forecast.jsonl` | каждый `simulate_only()` | `t, trigger, current_km, eff_power`, по модели: `run_at, finish, finish_no_rain, grid[]` (компактный 10км-грид) |
+| `position.jsonl` | каждый `update_position()` | факт `km/время`, `actual_speed_kmh, riding_h, calibrated_power, forecast_age_h, live_pred` (прогноз на этом км до пересчёта) |
+| `power_log.jsonl` | калибровка (расширен) | `from/to_km, riding_h, elapsed_h, stop_h, prev_power, default_power, delta_w` |
+
+**Триггеры `forecast`:** `startup` / `weather` (новый прогон) / `position` / `power` / `manual`.
+diff соседних снимков с `trigger=weather` → насколько новый прогон сдвинул план по каждому км.
+
+**Анализ (офлайн):** скорость — `position.actual_speed_kmh` vs `forecast.grid[].speed_kmh` на том
+же км при разных lead'ах (join по km); мощность — стабильность `calibrated_power` по отрезкам +
+ошибка ETA; погода-«истина» — прогноз с минимальным lead из `forecast.jsonl`.
+
+**Защита:** все записи в try/except — архив не может уронить `simulate_only`/`update_position`.
+
+---
+
 ## VPS и деплой
 
 - Адрес: `84.252.135.130:5000`, SSH-алиас `vps_griha3212`
+- ⚠️ Активный сервис — **`velo_weather`** (держит :5000). `velo.service` — зомби-дубликат (флапает), гасится `sudo systemctl disable --now velo.service`
 - Systemd: `sudo systemctl restart velo_weather`
 - Логи: `sudo journalctl -u velo_weather -n 50 --no-pager`
 - Рабочая директория: `/opt/velo_weather`

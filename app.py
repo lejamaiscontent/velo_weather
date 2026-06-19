@@ -17,7 +17,13 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo            # Python 3.9+
+except ImportError:
+    try:
+        from backports.zoneinfo import ZoneInfo
+    except ImportError:
+        ZoneInfo = None                      # 3.8 без backports — tz-метки упадут на МСК
 
 import core
 try:
@@ -83,6 +89,8 @@ DEFAULT_CONFIG = {
     "weather_samples": 10,
     "recalc_interval_min": 30,
     "planned_stop_budget_h": 0.0,
+    "archive_enabled": True,
+    "archive_dir": "archive",
 }
 
 MODELS = ["icon_seamless", "ecmwf_ifs025"]
@@ -239,6 +247,159 @@ def _load_persisted():
             _state["api_calls_date"]     = saved.get("api_calls_date", "")
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Архив статистики заезда (для офлайн-отладки физики/калибровки)
+# ---------------------------------------------------------------------------
+
+def _ride_id(cfg: dict) -> str:
+    s = (cfg.get("start_time") or "").strip()
+    if s:
+        return s[:16].replace(":", "-")   # 2026-06-20T05:00:00+00:00 -> 2026-06-20T05-00
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M")
+
+
+def _archive_dir(cfg: dict) -> Path:
+    d = Path(cfg.get("archive_dir", "archive")) / _ride_id(cfg)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _archive_append(cfg: dict, name: str, entry: dict):
+    with open(_archive_dir(cfg) / name, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _gpx_sha1(path: str) -> str:
+    try:
+        import hashlib
+        return hashlib.sha1(Path(path).read_bytes()).hexdigest()[:12]
+    except Exception:
+        return ""
+
+
+def _git_commit() -> str:
+    try:
+        import subprocess
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, timeout=5).decode().strip()
+    except Exception:
+        return ""
+
+
+def _archive_meta(cfg: dict):
+    """meta.json пишется один раз на заезд — для воспроизведения офлайн."""
+    try:
+        meta_path = _archive_dir(cfg) / "meta.json"
+        if meta_path.exists():
+            return
+        meta = {
+            "ride_id":    _ride_id(cfg),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "config":     cfg,
+            "gpx":        {"file": cfg.get("gpx_file"),
+                           "sha1": _gpx_sha1(cfg.get("gpx_file", "")),
+                           "total_km": round(_state.get("total_km", 0.0), 1)},
+            "git_commit": _git_commit(),
+            "models":     MODELS,
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"[archive] meta.json для {meta['ride_id']}")
+    except Exception as e:
+        print(f"[archive] meta не записан: {e}")
+
+
+_GRID_FIELDS = ("km", "lat", "lon", "wall_time", "speed_kmh",
+                "precip_mm_h", "wind_ms", "headwind_ms", "stop_here_h", "stop_reason")
+
+
+def _compact_grid(grid: list) -> list:
+    return [{k: g.get(k) for k in _GRID_FIELDS} for g in grid]
+
+
+def _archive_forecast(cfg: dict, trigger: str):
+    """Снимок текущего прогноза по каждой модели после пересчёта.
+    Сравнение соседних снимков с trigger=weather даёт «совпадение прогнозов
+    после обновления погоды»; грид служит базой для сверки скорости/ETA."""
+    if not cfg.get("archive_enabled", True):
+        return
+    try:
+        with _lock:
+            current_km    = _state["current_km"]
+            position_time = _state["position_time"]
+            eff_power     = _state["effective_power"]
+            models_snap = {}
+            for m in MODELS:
+                md      = _state["models"].get(m, {})
+                grid    = md.get("grid") or []
+                ride    = md.get("ride") or []
+                ride_nr = md.get("ride_no_rain") or []
+                lu      = _model_sched[m].get("last_update_at")
+                models_snap[m] = {
+                    "run_at":         lu.isoformat() if lu else None,
+                    "finish":         ride[-1]["wall_time"]    if ride    else None,
+                    "finish_no_rain": ride_nr[-1]["wall_time"] if ride_nr else None,
+                    "grid":           _compact_grid(grid),
+                }
+        entry = {
+            "t":             datetime.now(timezone.utc).isoformat(),
+            "trigger":       trigger,
+            "current_km":    current_km,
+            "position_time": position_time,
+            "eff_power":     eff_power,
+            "models":        models_snap,
+        }
+        _archive_meta(cfg)
+        _archive_append(cfg, "forecast.jsonl", entry)
+    except Exception as e:
+        print(f"[archive] forecast не записан: {e}")
+
+
+def _nearest_grid_pt(grid: list, km: float):
+    return min(grid, key=lambda g: abs((g.get("km") or 0) - km)) if grid else None
+
+
+def _archive_position(cfg: dict, km: float, pos_iso: str,
+                      prev_km: float, prev_pos, pos_wall: datetime, riding_h):
+    """Факт. фикс позиции + прогноз, под которым ехали → точность скорости/ETA.
+    Вызывать ДО simulate_only(), чтобы live_pred читал ещё не обновлённый грид."""
+    if not cfg.get("archive_enabled", True):
+        return
+    try:
+        actual_speed = None
+        if riding_h and riding_h > 0 and km > prev_km:
+            actual_speed = round((km - prev_km) / riding_h, 1)
+        with _lock:
+            eff_power = _state["effective_power"]
+            last_calc = _state.get("last_calc")
+            live = {}
+            for m in MODELS:
+                pt = _nearest_grid_pt(_state["models"].get(m, {}).get("grid") or [], km)
+                if pt:
+                    live[m] = {"km": pt.get("km"), "speed_kmh": pt.get("speed_kmh"),
+                               "wall_time": pt.get("wall_time")}
+        forecast_age_h = None
+        if last_calc:
+            forecast_age_h = round(
+                (pos_wall - datetime.fromisoformat(last_calc)).total_seconds() / 3600, 2)
+        entry = {
+            "t":                  datetime.now(timezone.utc).isoformat(),
+            "km":                 km,
+            "position_time":      pos_iso,
+            "prev_km":            prev_km,
+            "prev_position_time": prev_pos,
+            "riding_h":           round(riding_h, 3) if riding_h else None,
+            "actual_speed_kmh":   actual_speed,
+            "calibrated_power":   eff_power,
+            "forecast_age_h":     forecast_age_h,
+            "live_pred":          live,
+        }
+        _archive_append(cfg, "position.jsonl", entry)
+    except Exception as e:
+        print(f"[archive] position не записан: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -506,10 +667,11 @@ def fetch_weather(force: bool = False):
         _fetch_lock.release()
 
 
-def simulate_only():
+def simulate_only(trigger: str = "manual"):
     """
     Пересчитывает симуляцию по закешированной погоде. Не делает запросов к API.
     Вызывается при любом изменении пользовательских данных.
+    trigger — что вызвало пересчёт (weather/position/power/startup/manual), пишется в архив.
     """
     cfg = _load_config()
     gpx_path = cfg["gpx_file"]
@@ -584,6 +746,7 @@ def simulate_only():
             _state["config"]     = cfg
 
         _save_state()
+        _archive_forecast(cfg, trigger)
         print("[sim] Готово.")
 
     except Exception as e:
@@ -597,7 +760,7 @@ def simulate_only():
 def recalculate():
     """Полный цикл: фетч погоды + симуляция. Для старта и ручного /recalc."""
     fetch_weather()
-    simulate_only()
+    simulate_only(trigger="startup")
 
 
 def _bg_loop():
@@ -638,7 +801,7 @@ def _bg_loop():
             _fetch_lock.release()
         # Симуляцию пересчитываем только если кеш погоды реально обновился
         if did_full:
-            simulate_only()
+            simulate_only(trigger="weather")
 
 
 # ---------------------------------------------------------------------------
@@ -679,10 +842,15 @@ def _calibrate_async(cfg, segments, weather_by_model,
     new_power = round(new_power, 1)
 
     with _lock:
+        prev_power = _state["effective_power"]
         _state["effective_power"] = new_power
 
     _log_power("calibration", new_power,
-               from_km=from_km, to_km=pos_km, riding_h=round(riding_h, 2))
+               from_km=from_km, to_km=pos_km,
+               riding_h=round(riding_h, 2), elapsed_h=round(total_elapsed_h, 2),
+               stop_h=round(stop_h, 2),
+               prev_power=prev_power, default_power=cfg["power_w"],
+               delta_w=(round(new_power - prev_power, 1) if prev_power else None))
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +959,12 @@ def update_position():
                 from_km   = 0.0
                 from_wall = route_start
 
+            with _lock:
+                stops = list(_state["actual_stops"])
+            stop_h = sum(s.get("duration_h", 0) for s in stops
+                         if from_km <= s.get("km", 0) <= km)
+            riding_h = (pos_wall - from_wall).total_seconds() / 3600.0 - stop_h
+
             try:
                 with _lock:
                     weather_by_model = dict(_state["weather_cache"])
@@ -800,7 +974,11 @@ def update_position():
             except Exception:
                 pass
 
-            simulate_only()
+            # Архив факт. позиции: live_pred читает грид ДО пересчёта
+            _archive_position(cfg, km, pos_iso, from_km,
+                              from_wall.isoformat(), pos_wall, riding_h)
+
+            simulate_only(trigger="position")
 
         threading.Thread(target=_recalc_with_calib, daemon=True).start()
 
