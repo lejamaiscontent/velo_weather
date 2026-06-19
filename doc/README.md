@@ -11,6 +11,7 @@
 | [architecture.md](architecture.md) | Физика `solve_speed`, направление ветра, планировщик остановок, дождь/без, API сервера |
 | [weather.md](weather.md) | Open-Meteo, сетка точек, умное расписание фетча, дешёвая проба, `weather_log`/`weather_now` |
 | [archive.md](archive.md) | Архив статистики заезда (`archive/<ride_id>/`) + стоп-гап текущей погоды + как анализировать |
+| [analysis.md](analysis.md) | Сверка физики по реальному заезду (`analysis/`): парсер FIT/TCX/GPX + предсказание vs факт |
 | [deploy.md](deploy.md) | VPS, systemd-сервисы, команды деплоя |
 | [decisions.md](decisions.md) | Журнал ключевых решений (почему так) + разборы логов |
 | [todo.md](todo.md) | Задачи: активные и сделанные |

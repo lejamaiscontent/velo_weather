@@ -6,5 +6,12 @@ __pycache__/
 *.jsonl
 archive/
 
+# Данные заездов гонщика и секреты (FIT/TCX, токены) — не коммитим
+analysis/data/*
+!analysis/data/.gitkeep
+.env
+secrets.json
+*.fit
+
 # IDE
 .idea/workspace.xml
