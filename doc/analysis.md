@@ -19,10 +19,30 @@
 | **`.FIT`** (рекомендую) | да | Strava → активность → «···» → **Export Original** |
 | `.TCX` | да (`<Watts>`) | экспорт из приложения/часов |
 | `.GPX` | **обычно НЕТ** | Strava GPX-экспорт выкидывает ватты |
-| Strava API streams | да | OAuth (токен — секрет, в `.env`, не в репо) |
+| **Strava API streams** | да | `strava_fetch.py` (если `.fit`-экспорт недоступен) |
 
 Файлы заезда кладём в `analysis/data/` (каталог в `.gitignore` — приватные данные не коммитим).
 Для `.fit` нужен `pip install fitparse`.
+
+### Когда `.fit` не вытащить — Strava API
+
+Заезды, записанные приложением Strava, не дают `.fit` через «Export Original», но мощность есть в
+базе Strava и отдаётся через **streams API**. `analysis/strava_fetch.py` тянет её в наш `.json`:
+
+```bash
+# 1) однократно получить access_token (см. шапку strava_fetch.py) и положить в .env:
+#    STRAVA_ACCESS_TOKEN=...        (.env в .gitignore, токен НЕ в чат/репо)
+# 2) выгрузить активность по её id:
+python analysis/strava_fetch.py <activity_id>      # -> analysis/data/strava_<id>.json
+# 3) сверить:
+python analysis/validate_physics.py analysis/data/strava_<id>.json --mass 90 --fit
+```
+
+Альтернатива — библиотека `stravalib` (обёртка того же API). `stravaweblib` (выгрузка через
+веб-сессию) — хрупко и ToS-серо, не рекомендуется.
+
+**Формат `.json`** (его же пишет `strava_fetch`): список точек
+`{t, lat, lon, ele?, power?, hr?, cad?, temp?}` — `parse_ride` понимает его наравне с FIT/TCX/GPX.
 
 ## Использование
 

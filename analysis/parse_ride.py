@@ -107,12 +107,27 @@ def parse_fit(path) -> List[TrackPoint]:
     return pts
 
 
+def parse_points_json(path) -> List[TrackPoint]:
+    """Нормализованный JSON: список точек {t, lat, lon, ele?, power?, hr?, cad?, temp?}.
+    Так пишет analysis/strava_fetch.py (streams Strava API)."""
+    pts: List[TrackPoint] = []
+    for d in json.load(open(path, encoding='utf-8')):
+        if not d.get('t') or d.get('lat') is None or d.get('lon') is None:
+            continue
+        pts.append(TrackPoint(
+            t=_parse_time(d['t']), lat=d['lat'], lon=d['lon'],
+            ele=d.get('ele'), power=d.get('power'), hr=d.get('hr'),
+            cad=d.get('cad'), temp=d.get('temp')))
+    return pts
+
+
 def parse_ride(path) -> List[TrackPoint]:
     ext = os.path.splitext(str(path))[1].lower()
-    if ext == '.gpx': return parse_gpx(path)
-    if ext == '.tcx': return parse_tcx(path)
-    if ext == '.fit': return parse_fit(path)
-    raise ValueError(f"Неизвестный формат: {ext} (ожидаю .gpx/.tcx/.fit)")
+    if ext == '.gpx':  return parse_gpx(path)
+    if ext == '.tcx':  return parse_tcx(path)
+    if ext == '.fit':  return parse_fit(path)
+    if ext == '.json': return parse_points_json(path)
+    raise ValueError(f"Неизвестный формат: {ext} (ожидаю .gpx/.tcx/.fit/.json)")
 
 
 def summary(points: List[TrackPoint]) -> dict:

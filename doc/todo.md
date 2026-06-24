@@ -36,4 +36,4 @@
 - ~~**#28**~~ Деплой #25+#26 на VPS (`velo_weather`) 19.06.2026 — проверено: новый код работает, архив создаётся для заезда 2026-06-20
 - ~~**#29**~~ Зомби-сервис `velo.service` погашен (`disable --now`); активен только `velo_weather`
 - ~~**#30**~~ Стоп-гап: снимок ТЕКУЩЕЙ погоды каждые 30 мин в `weather_now.jsonl` (из кеша прогноза, нулевой расход API) — копит ряд погоды-«истины» для местности. Реализовано + задеплоено 19.06
-- ~~**#32**~~ Модуль `analysis/` для сверки физики с реальным треком: `parse_ride.py` (.fit/.tcx/.gpx → точки), `validate_physics.py` (предсказание vs факт + подбор CdA/Crr, ветер ERA5/const/snapshot). Офлайн, переиспользует `core.py`. См. [analysis.md](analysis.md)
+- ~~**#32**~~ Модуль `analysis/` для сверки физики с реальным треком: `parse_ride.py` (.fit/.tcx/.gpx/.json → точки), `strava_fetch.py` (Strava API streams → .json, когда .fit недоступен), `validate_physics.py` (предсказание vs факт + подбор CdA/Crr, ветер ERA5/const/snapshot). Офлайн, переиспользует `core.py`. См. [analysis.md](analysis.md)
