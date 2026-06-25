@@ -43,28 +43,50 @@ class RealSeg:
 
 
 def build_segments(points: List[TrackPoint],
-                   min_dist_m: float = 10.0,
-                   max_speed_kmh: float = 90.0) -> List[RealSeg]:
-    """Соседние точки -> отрезки с факт. скоростью, уклоном, азимутом, мощностью."""
+                   baseline_m: float = 40.0,
+                   max_speed_kmh: float = 90.0,
+                   max_grade: float = 0.25) -> List[RealSeg]:
+    """Точки -> отрезки. Накапливаем путь до ~baseline_m (а не берём соседние 1Гц-точки),
+    чтобы подавить шум высоты/GPS: уклон на 40 м втрое стабильнее, чем на ~7 м.
+    Скорость — путь/время по накопленному отрезку, мощность — среднее по всем точкам отрезка,
+    уклон клампится в ±max_grade (защита от выбросов высоты)."""
     segs: List[RealSeg] = []
-    for a, b in zip(points, points[1:]):
+    n = len(points)
+    i = 0
+    while i < n - 1:
+        a = points[i]
+        # копим путь, пока не наберём baseline_m
+        path = 0.0
+        j = i + 1
+        while j < n:
+            path += core._haversine(points[j - 1].lat, points[j - 1].lon,
+                                    points[j].lat, points[j].lon)
+            if path >= baseline_m:
+                break
+            j += 1
+        if j >= n:
+            break
+        b = points[j]
         dt = (b.t - a.t).total_seconds()
-        if dt <= 0:
+        if dt <= 0 or path <= 0:
+            i = j
             continue
-        dist = core._haversine(a.lat, a.lon, b.lat, b.lon)
-        if dist < min_dist_m:
-            continue
-        speed_kmh = dist / dt * 3.6
+        speed_kmh = path / dt * 3.6
         if speed_kmh > max_speed_kmh:        # выброс GPS
+            i = j
             continue
-        grade = ((b.ele - a.ele) / dist) if (a.ele is not None and b.ele is not None) else 0.0
+        if a.ele is not None and b.ele is not None:
+            grade = max(-max_grade, min(max_grade, (b.ele - a.ele) / path))
+        else:
+            grade = 0.0
         bearing = core._bearing(a.lat, a.lon, b.lat, b.lon)
-        pw = [x for x in (a.power, b.power) if x is not None]
+        pw = [p.power for p in points[i:j + 1] if p.power is not None]
         segs.append(RealSeg(
             t=a.t, lat=(a.lat + b.lat) / 2, lon=(a.lon + b.lon) / 2,
-            dist_m=dist, dt_s=dt, speed_kmh=speed_kmh,
+            dist_m=path, dt_s=dt, speed_kmh=speed_kmh,
             grade=grade, bearing=bearing,
             power=(sum(pw) / len(pw) if pw else None)))
+        i = j
     return segs
 
 
@@ -120,8 +142,8 @@ def weather_from_snapshot(path):
 def validate(segs, weather_at, mass, cda, crr):
     rows = []
     for s in segs:
-        if s.power is None:
-            continue
+        if s.power is None or s.power < 1.0:   # пропускаем накат/торможение:
+            continue                            # баланс педалирования их не описывает
         ws, wd = weather_at(s.lat, s.lon, s.t)
         hw = core.effective_headwind(ws, wd, s.bearing)
         v_pred = core.solve_speed(s.power, s.grade, hw, mass, cda, crr) * 3.6
@@ -134,10 +156,12 @@ def stats(rows):
         return None
     res = [r[2] for r in rows]
     n = len(res)
+    rmse = math.sqrt(sum(x * x for x in res) / n)
     return {
         "segments":        n,
         "mean_resid_kmh":  round(sum(res) / n, 2),                 # факт − прогноз
-        "rmse_kmh":        round(math.sqrt(sum(x * x for x in res) / n), 2),
+        "rmse_kmh":        round(rmse, 2),
+        "rmse_raw":        rmse,                                   # без округления — для сравнения в подборе
         "mean_actual_kmh": round(sum(r[0].speed_kmh for r in rows) / n, 1),
         "mean_pred_kmh":   round(sum(r[1] for r in rows) / n, 1),
     }
@@ -151,7 +175,7 @@ def fit_cda_crr(segs, weather_at, mass):
         crr = 0.003
         while crr <= 0.0081:
             st = stats(validate(segs, weather_at, mass, cda, round(crr, 4)))
-            if st and (best is None or st["rmse_kmh"] < best["rmse_kmh"]):
+            if st and (best is None or st["rmse_raw"] < best["rmse_raw"]):
                 best = {**st, "cda": round(cda, 2), "crr": round(crr, 4)}
             crr += 0.0005
         cda += 0.02
@@ -178,18 +202,21 @@ def main():
     ap.add_argument("--fit", action="store_true", help="подобрать CdA/Crr под данные")
     a = ap.parse_args()
 
+    def _clean(st):                       # прячем служебный rmse_raw из вывода
+        return {k: v for k, v in st.items() if k != "rmse_raw"} if st else st
+
     points = parse_ride(a.ride)
     segs = build_segments(points)
-    n_pw = sum(1 for s in segs if s.power is not None)
-    print(f"Точек: {len(points)}, отрезков: {len(segs)}, с мощностью: {n_pw}")
+    n_pw = sum(1 for s in segs if s.power is not None and s.power >= 1.0)   # столько реально идёт в подбор
+    print(f"Точек: {len(points)}, отрезков: {len(segs)}, с мощностью (>0): {n_pw}")
     if n_pw == 0:
-        print("⚠ В файле нет мощности — нужен .fit/.tcx или Strava streams.")
+        print("⚠ Нет отрезков с ненулевой мощностью — нужен .fit/.tcx или Strava streams с ваттами.")
         return
 
     weather_at = _make_weather(a.weather, points)
-    print(f"CdA={a.cda} Crr={a.crr} mass={a.mass}:", stats(validate(segs, weather_at, a.mass, a.cda, a.crr)))
+    print(f"CdA={a.cda} Crr={a.crr} mass={a.mass}:", _clean(stats(validate(segs, weather_at, a.mass, a.cda, a.crr))))
     if a.fit:
-        print("Лучший подбор:", fit_cda_crr(segs, weather_at, a.mass))
+        print("Лучший подбор:", _clean(fit_cda_crr(segs, weather_at, a.mass)))
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ def streams_to_points(start, st):
     col = lambda k: (st.get(k, {}) or {}).get("data") or []
     tarr, latlng = col("time"), col("latlng")
     alt, pw = col("altitude"), col("watts")
-    hr, cad, temp = col("heartrate"), col("cadence"), col("temperature")
+    hr, cad, temp = col("heartrate"), col("cadence"), col("temp")   # Strava тип потока — 'temp'
     get = lambda arr, i: (arr[i] if i < len(arr) else None)
     pts = []
     for i in range(len(tarr)):

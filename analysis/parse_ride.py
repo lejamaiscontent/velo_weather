@@ -99,9 +99,11 @@ def parse_fit(path) -> List[TrackPoint]:
             t = t.replace(tzinfo=timezone.utc)
         if t is None:
             continue
+        ele = d.get('enhanced_altitude')          # fallback ПО ЗНАЧЕНИЮ, а не по наличию ключа:
+        if ele is None:                            # fitparse кладёт ключ со значением None для
+            ele = d.get('altitude')                # невалидных полей -> .get(k, default) не сработал бы
         pts.append(TrackPoint(
-            t=t, lat=lat * SC, lon=lon * SC,
-            ele=d.get('enhanced_altitude', d.get('altitude')),
+            t=t, lat=lat * SC, lon=lon * SC, ele=ele,
             power=d.get('power'), hr=d.get('heart_rate'),
             cad=d.get('cadence'), temp=d.get('temperature')))
     return pts
