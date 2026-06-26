@@ -45,12 +45,14 @@ scp -r vps_griha3212:/opt/velo_weather/archive/<ride_id> .
 | 80 / 443 | nginx | 🌍 | firstglance.ru (+ SSL) |
 | 47291 | nginx | 🌍 | → `127.0.0.1:8000` co2monitor |
 | 8080 | nginx | 🌍 | → `127.0.0.1:8001` ambrosia |
-| **5000** | **python** | **🌍** | **velo_weather напрямую (Werkzeug), без nginx** |
+| 5000 | nginx | 🌍 | → `127.0.0.1:5001` velo_weather (за nginx с 26.06, #33) |
+| 5001 | python | 🔒 | velo_weather — само приложение (Werkzeug, localhost) |
 | 8000 | uvicorn | 🔒 | co2monitor backend |
 | 8001 | dockerd | 🔒 | ambrosia backend (Docker) |
 | 5984 | couchdb (beam.smp) | 🔒 | данные firstglance (наружу только через nginx) |
 | 4369 / 41179 | epmd / beam.smp | 🔒 | служебное CouchDB/Erlang |
 
-ufw открыт наружу: 22, 80, 443, **5000**, 8080, 47291. velo_weather — единственное приложение,
-торчащее в интернет напрямую (и слушает `0.0.0.0:5000`, и открыт в ufw). Принцип сервера —
-«наружу только nginx (+SSH)»; velo нарушает. План спрятать за nginx — см. TODO #33.
+ufw открыт наружу: 22, 80, 443, 5000, 8080, 47291. С 26.06.2026 (#33) velo спрятан за nginx
+(вариант 2): nginx слушает `:5000` и проксирует на `127.0.0.1:5001`, само приложение наружу не
+торчит. URL `ip:5000` сохранён. Конфиг — `/etc/nginx/sites-available/velo_weather`. Все приложения
+теперь на localhost, наружу — только nginx (+SSH). Рекомендация далее — поддомен + TLS (см. TODO #33).

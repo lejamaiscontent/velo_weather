@@ -1175,7 +1175,9 @@ if __name__ == "__main__":
     # Первый расчёт при старте, затем демон раз в 30 мин
     threading.Thread(target=recalculate, daemon=True).start()
     threading.Thread(target=_bg_loop, daemon=True).start()
-    port = int(os.environ.get("PORT", 5000))
-    print(f"[app] Сервер запущен на порту {port}")
+    port = int(os.environ.get("PORT", 5001))
+    # Слушаем только localhost — наружу пускает nginx (порт 5000 -> 127.0.0.1:5001). См. doc/deploy.md, TODO #33.
+    host = os.environ.get("HOST", "127.0.0.1")
+    print(f"[app] Сервер запущен на {host}:{port} (за nginx)")
     print(f"[app] Пересчёт погоды каждые {_load_config().get('recalc_interval_min',30)} мин")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)
