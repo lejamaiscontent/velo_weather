@@ -36,3 +36,21 @@ scp vps_griha3212:/opt/velo_weather/weather_now.jsonl .
 scp vps_griha3212:/opt/velo_weather/power_log.jsonl .
 scp -r vps_griha3212:/opt/velo_weather/archive/<ride_id> .
 ```
+
+## Карта портов (проверено 19.06.2026, `ss -tlnp` + `ufw` + `nginx -T`)
+
+| Порт | Слушает | Наружу | Что |
+|------|---------|--------|-----|
+| 22 | sshd | 🌍 | SSH |
+| 80 / 443 | nginx | 🌍 | firstglance.ru (+ SSL) |
+| 47291 | nginx | 🌍 | → `127.0.0.1:8000` co2monitor |
+| 8080 | nginx | 🌍 | → `127.0.0.1:8001` ambrosia |
+| **5000** | **python** | **🌍** | **velo_weather напрямую (Werkzeug), без nginx** |
+| 8000 | uvicorn | 🔒 | co2monitor backend |
+| 8001 | dockerd | 🔒 | ambrosia backend (Docker) |
+| 5984 | couchdb (beam.smp) | 🔒 | данные firstglance (наружу только через nginx) |
+| 4369 / 41179 | epmd / beam.smp | 🔒 | служебное CouchDB/Erlang |
+
+ufw открыт наружу: 22, 80, 443, **5000**, 8080, 47291. velo_weather — единственное приложение,
+торчащее в интернет напрямую (и слушает `0.0.0.0:5000`, и открыт в ufw). Принцип сервера —
+«наружу только nginx (+SSH)»; velo нарушает. План спрятать за nginx — см. TODO #33.
